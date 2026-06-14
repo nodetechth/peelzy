@@ -6,7 +6,7 @@ export function getStickerRotation(stickerId: string, index: number, range = 10)
 }
 
 export function fillStickerSlots(stickers: CoverSticker[]): Array<CoverSticker | null> {
-  return Array.from({ length: 4 }, (_, index) => stickers[index] ?? null);
+  return Array.from({ length: 5 }, (_, index) => stickers[index] ?? null);
 }
 
 export function darkenColor(hex: string, amount = 20): string {

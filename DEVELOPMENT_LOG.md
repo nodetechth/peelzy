@@ -1106,3 +1106,64 @@
 - `modules/peelzy-subject-lift/`
 - `modules/peelzy-mlkit-subject-segmentation/`
 - `DEVELOPMENT_LOG.md`
+
+### 2026-06-14 21:10 JST
+
+作業:
+- シール帳のBook詳細とページ内容をAsyncStorageへキャッシュし、初期表示とページ移動時に先出し表示するよう変更。
+- シール帳ページ取得のSupabase selectを表示に必要なカラムへ限定。
+- シール・要素の追加、削除、移動、編集時にページキャッシュも更新。
+
+ファイル:
+- `lib/bookPageCache.ts`
+- `lib/storage.ts`
+- `app/(app)/book-detail.tsx`
+- `DEVELOPMENT_LOG.md`
+
+### 2026-06-14 21:35 JST
+
+作業:
+- シール画像を端末キャッシュへ保存してから表示する共通コンポーネントを追加。
+- Book詳細、Collection、Home表紙プレビューのシール画像表示をローカルキャッシュ対応に変更。
+- Homeの先頭ページプリフェッチをローカル画像キャッシュのウォームアップへ変更。
+- Supabase Storageへアップロードするシール本体とサムネイルに長期cacheControlを設定。
+
+ファイル:
+- `lib/stickerImageCache.ts`
+- `components/CachedStickerImage.tsx`
+- `app/(app)/book-detail.tsx`
+- `app/(app)/collection.tsx`
+- `app/(app)/home.tsx`
+- `components/BookCover/*`
+- `lib/storage.ts`
+- `DEVELOPMENT_LOG.md`
+
+### 2026-06-14 22:05 JST
+
+作業:
+- シール選択後、表示されている画像範囲をすぐドラッグできるよう選択中の操作エリアを拡張。
+- 選択中でも別の最前面シールをタップして選択を移せるよう変更。
+- ページ移動、画面離脱、アプリ非active時にシール帳キャンバスの選択状態を解除。
+- シールのドラッグ制限を選択余白基準から中心点基準へ変更し、ページ端まで配置できるよう調整。
+
+ファイル:
+- `app/(app)/book-detail.tsx`
+- `DEVELOPMENT_LOG.md`
+
+### 2026-06-14 22:35 JST
+
+作業:
+- シール帳詳細画面の右上「…」をページカラー変更シートに変更。
+- Book設定更新時にログインユーザー条件を明示し、ページカラー単体更新APIを追加。
+- シール帳選択画面の表紙カードを一回り大きくし、表紙サムネイルを5枚表示に変更。
+- 選択中シールを最前面に上げ、Stampなどのページ要素と重なった後もすぐ動かしやすく調整。
+
+検証:
+- `npx tsc --noEmit`
+
+ファイル:
+- `app/(app)/book-detail.tsx`
+- `app/(app)/home.tsx`
+- `components/BookCover/*`
+- `lib/storage.ts`
+- `DEVELOPMENT_LOG.md`

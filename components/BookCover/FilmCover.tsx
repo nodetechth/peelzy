@@ -1,4 +1,5 @@
-import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import CachedStickerImage from '../CachedStickerImage';
 import { BookCoverProps } from './types';
 import { truncateTitle } from './utils';
 
@@ -12,14 +13,15 @@ export default function FilmCover({
   preview = false,
 }: BookCoverProps) {
   const perforationCount = Math.floor((height - 40) / 18);
-  const stickerSize = width * 0.34;
+  const stickerSize = width * 0.29;
   const code = truncateTitle(bookName, 5).toUpperCase();
   const sideInset = Math.max(14, width * 0.14);
   const stickerPositions = [
-    { top: height * 0.12, left: width * 0.15, transform: [{ rotate: '-10deg' }] },
-    { top: height * 0.36, right: width * 0.11, transform: [{ rotate: '9deg' }] },
-    { top: height * 0.54, left: width * 0.2, transform: [{ rotate: '-4deg' }] },
-    { top: height * 0.22, right: width * 0.22, transform: [{ rotate: '13deg' }] },
+    { top: height * 0.11, left: width * 0.17, transform: [{ rotate: '-10deg' }] },
+    { top: height * 0.28, right: width * 0.16, transform: [{ rotate: '9deg' }] },
+    { top: height * 0.49, left: width * 0.2, transform: [{ rotate: '-4deg' }] },
+    { top: height * 0.18, right: width * 0.3, transform: [{ rotate: '13deg' }] },
+    { top: height * 0.6, right: width * 0.21, transform: [{ rotate: '7deg' }] },
   ];
 
   return (
@@ -41,7 +43,7 @@ export default function FilmCover({
       <View style={[styles.innerBorder, { left: sideInset + 3, right: sideInset + 3 }]} />
 
       <View style={styles.stickerLayer}>
-        {!preview && stickers.slice(0, 4).map((sticker, index) => (
+        {!preview && stickers.slice(0, 5).map((sticker, index) => (
             <View
               key={sticker.id}
               style={[
@@ -51,7 +53,7 @@ export default function FilmCover({
                 stickerPositions[index],
               ]}
             >
-              <Image source={{ uri: sticker.image_url }} style={styles.stickerImage} resizeMode="contain" />
+              <CachedStickerImage uri={sticker.image_url} style={styles.stickerImage} resizeMode="contain" />
             </View>
           ))}
       </View>

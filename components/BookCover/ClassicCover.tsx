@@ -1,4 +1,5 @@
-import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import CachedStickerImage from '../CachedStickerImage';
 import { BookCoverProps } from './types';
 import { darkenColor, truncateTitle } from './utils';
 import { theme as appTheme } from '../../constants/theme';
@@ -14,12 +15,13 @@ export default function ClassicCover({
   preview = false,
 }: BookCoverProps) {
   const coverColor = accentColor || '#E4C0FF';
-  const stickerSize = width * 0.34;
+  const stickerSize = width * 0.3;
   const stickerPositions = [
-    { top: height * 0.12, left: width * 0.15, transform: [{ rotate: '-10deg' }] },
-    { top: height * 0.36, right: width * 0.11, transform: [{ rotate: '9deg' }] },
-    { top: height * 0.54, left: width * 0.2, transform: [{ rotate: '-4deg' }] },
-    { top: height * 0.22, right: width * 0.22, transform: [{ rotate: '13deg' }] },
+    { top: height * 0.1, left: width * 0.14, transform: [{ rotate: '-10deg' }] },
+    { top: height * 0.27, right: width * 0.09, transform: [{ rotate: '9deg' }] },
+    { top: height * 0.48, left: width * 0.19, transform: [{ rotate: '-4deg' }] },
+    { top: height * 0.17, right: width * 0.25, transform: [{ rotate: '13deg' }] },
+    { top: height * 0.6, right: width * 0.16, transform: [{ rotate: '7deg' }] },
   ];
 
   return (
@@ -35,7 +37,7 @@ export default function ClassicCover({
         {!preview && <View style={[styles.spine, { backgroundColor: darkenColor(coverColor) }]} />}
         {!preview && <View style={styles.highlight} />}
         <View style={styles.stickerLayer}>
-          {!preview && stickers.slice(0, 4).map((sticker, index) => (
+          {!preview && stickers.slice(0, 5).map((sticker, index) => (
               <View
                 key={sticker.id}
                 style={[
@@ -44,7 +46,7 @@ export default function ClassicCover({
                   stickerPositions[index],
                 ]}
               >
-                <Image source={{ uri: sticker.image_url }} style={styles.stickerImage} resizeMode="contain" />
+                <CachedStickerImage uri={sticker.image_url} style={styles.stickerImage} resizeMode="contain" />
               </View>
             ))}
         </View>

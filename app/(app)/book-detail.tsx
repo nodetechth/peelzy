@@ -7,7 +7,6 @@ import {
   Dimensions,
   ActivityIndicator,
   Modal,
-  Image,
   Platform,
   FlatList,
   PanResponder,
@@ -21,11 +20,12 @@ import {
   GestureResponderEvent,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useFocusEffect, useRouter, useLocalSearchParams } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import * as MediaLibrary from 'expo-media-library';
 import { captureRef } from 'react-native-view-shot';
 import {
+  Book,
   BookPageElement,
   BookPageElementType,
   createBookPageElement,
@@ -38,6 +38,7 @@ import {
   getUnplacedStickers,
   updateBookPageElementContent,
   updateBookPageElementLayout,
+  updateBookPageColor,
   updateStickerBookPageTransform,
   updateStickerPageTransform,
   removeStickerFromPage,
@@ -49,6 +50,13 @@ import { PEELZY_COLORS } from '../../constants/colors';
 import { CoverTheme, DEFAULT_ACCENT_COLOR, DEFAULT_COVER_THEME } from '../../components/BookCover';
 import { normalizeAccentColor } from '../../components/BookCover/utils';
 import { getStickerAlphaMask, isPointWithinAlphaMask } from '../../lib/stickerAlphaMask';
+import CachedStickerImage from '../../components/CachedStickerImage';
+import {
+  getCachedBookDetail,
+  getCachedBookPage,
+  setCachedBookDetail,
+  setCachedBookPage,
+} from '../../lib/bookPageCache';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const STICKER_SIZE = 280;
@@ -142,11 +150,20 @@ function getStickerHitFrame(
   displayScale: number,
   useFullStickerFrame = false
 ) {
+  const displayedCanvasSize = stickerSize * displayScale;
+  const displayedCanvasOffset = (stickerSize - displayedCanvasSize) / 2;
+  if (useFullStickerFrame) {
+    return {
+      left: displayedCanvasOffset,
+      top: displayedCanvasOffset,
+      width: displayedCanvasSize,
+      height: displayedCanvasSize,
+    };
+  }
+
   const bounds = useFullStickerFrame
     ? { x: 0, y: 0, width: 1, height: 1 }
     : getStickerNormalizedHitBounds(sticker);
-  const displayedCanvasSize = stickerSize * displayScale;
-  const displayedCanvasOffset = (stickerSize - displayedCanvasSize) / 2;
   const minHitSize = Math.min(stickerSize, MIN_STICKER_HIT_SIZE);
   const width = Math.min(
     stickerSize,
@@ -178,6 +195,19 @@ function getStickerDragBounds(
     maxX: canvasWidth - hitFrame.left - hitFrame.width,
     minY: -hitFrame.top,
     maxY: canvasHeight - hitFrame.top - hitFrame.height,
+  };
+}
+
+function getStickerLayoutDragBounds(
+  canvasWidth: number,
+  canvasHeight: number,
+  stickerSize: number
+) {
+  return {
+    minX: -stickerSize / 2,
+    maxX: canvasWidth - stickerSize / 2,
+    minY: -stickerSize / 2,
+    maxY: canvasHeight - stickerSize / 2,
   };
 }
 
@@ -311,6 +341,7 @@ type PageCanvasProps = {
   pagePanY: number;
   canvasScreenFrame: CanvasScreenFrame;
   currentPage: number;
+  clearSelectionNonce: number;
   newlyPlacedId: string | null;
   pageTheme: CoverTheme;
   accentColor: string;
@@ -339,6 +370,7 @@ function PageCanvas({
   pagePanY,
   canvasScreenFrame,
   currentPage,
+  clearSelectionNonce,
   newlyPlacedId,
   pageTheme,
   accentColor,
@@ -351,6 +383,13 @@ function PageCanvas({
   const isFilm = pageTheme === 'film';
   const selectedSticker = stickers.find((sticker) => sticker.id === selectedStickerId) ?? null;
   const selectedElement = elements.find((element) => element.id === selectedElementId) ?? null;
+
+  useEffect(() => {
+    setSelectedStickerId(null);
+    setSelectedElementId(null);
+    setPeelConfirmSticker(null);
+    pendingStickerTapRef.current = null;
+  }, [clearSelectionNonce, currentPage]);
 
   useEffect(() => {
     onStickerSelectionChange(Boolean(selectedSticker || selectedElement));
@@ -512,13 +551,13 @@ function PageCanvas({
 
   const handleStartShouldSetResponderCapture = useCallback(
     (event: GestureResponderEvent) => {
-      if (selectedSticker) return false;
       const point = getCanvasPoint(event);
       const sticker = findTopmostStickerAtPoint(point.x, point.y);
+      if (sticker && sticker.id === selectedStickerId) return false;
       pendingStickerTapRef.current = sticker;
       return sticker !== null;
     },
-    [findTopmostStickerAtPoint, getCanvasPoint, selectedSticker]
+    [findTopmostStickerAtPoint, getCanvasPoint, selectedStickerId]
   );
 
   const handleStickerTapRelease = useCallback(() => {
@@ -669,6 +708,7 @@ function PageCanvas({
           pagePanX={pagePanX}
           pagePanY={pagePanY}
           canvasScreenFrame={canvasScreenFrame}
+          allowVisibleOverflowDrag
         />
       ))}
 
@@ -690,8 +730,8 @@ function PageCanvas({
           >
             {peelConfirmSticker && (
               <>
-                <Image
-                  source={{ uri: peelConfirmSticker.image_url }}
+                <CachedStickerImage
+                  uri={peelConfirmSticker.image_url}
                   style={[
                     styles.modalImage,
                     { transform: [{ rotate: `${peelConfirmSticker.rotation ?? 0}deg` }] },
@@ -1153,6 +1193,7 @@ type DraggableStickerProps = {
   pagePanX: number;
   pagePanY: number;
   canvasScreenFrame: CanvasScreenFrame;
+  allowVisibleOverflowDrag?: boolean;
 };
 
 function DraggableSticker({
@@ -1170,6 +1211,7 @@ function DraggableSticker({
   pagePanX,
   pagePanY,
   canvasScreenFrame,
+  allowVisibleOverflowDrag = false,
 }: DraggableStickerProps) {
   const posX = sticker.pos_x ?? 0.5;
   const posY = sticker.pos_y ?? 0.5;
@@ -1184,6 +1226,19 @@ function DraggableSticker({
     () => getStickerHitFrame(sticker, stickerSize, displayScale, isSelected),
     [displayScale, isSelected, sticker, stickerSize]
   );
+  const touchFrame = useMemo(() => {
+    const left = Math.min(0, hitFrame.left);
+    const top = Math.min(0, hitFrame.top);
+    const right = Math.max(stickerSize, hitFrame.left + hitFrame.width);
+    const bottom = Math.max(stickerSize, hitFrame.top + hitFrame.height);
+
+    return {
+      left,
+      top,
+      width: right - left,
+      height: bottom - top,
+    };
+  }, [hitFrame.height, hitFrame.left, hitFrame.top, hitFrame.width, stickerSize]);
 
   const initialStickerSize = STICKER_SIZE * pageZoom * initialBookScale;
   const initialX = canvasWidth / 2 + ((posX * canvasWidth) - canvasWidth / 2) * pageZoom + pagePanX - initialStickerSize / 2;
@@ -1262,7 +1317,10 @@ function DraggableSticker({
   }, [posX, posY, canvasWidth, canvasHeight, pagePanX, pagePanY, pageZoom, isNewlyPlaced, sticker.id, sticker.metadata, sticker.rotation]);
 
   useEffect(() => {
-    if (isSelected) return;
+    if (isSelected) {
+      setCurrentZIndex(998);
+      return;
+    }
     resetTemporaryStickerTransform();
     setCurrentZIndex(1);
     setIsDragging(false);
@@ -1390,13 +1448,15 @@ function DraggableSticker({
 
   const persistCurrentTransform = useCallback(() => {
     const finalStickerSize = STICKER_SIZE * pageZoom * bookScaleRef.current;
-    const dragBounds = getStickerDragBounds(canvasWidth, canvasHeight, finalStickerSize, hitFrame);
+    const dragBounds = allowVisibleOverflowDrag
+      ? getStickerLayoutDragBounds(canvasWidth, canvasHeight, finalStickerSize)
+      : getStickerDragBounds(canvasWidth, canvasHeight, finalStickerSize, hitFrame);
     const finalX = clamp(positionRef.current.x, dragBounds.minX, dragBounds.maxX);
     const finalY = clamp(positionRef.current.y, dragBounds.minY, dragBounds.maxY);
     positionRef.current = { x: finalX, y: finalY };
     setCurrentPos({ x: finalX, y: finalY });
     saveTransform(finalX, finalY);
-  }, [canvasHeight, canvasWidth, hitFrame, pageZoom, saveTransform]);
+  }, [allowVisibleOverflowDrag, canvasHeight, canvasWidth, hitFrame, pageZoom, saveTransform]);
 
   const panResponder = useMemo(
     () =>
@@ -1478,7 +1538,9 @@ function DraggableSticker({
             const newSize = STICKER_SIZE * pageZoom * nextScale;
             const centerX = positionRef.current.x + oldSize / 2;
             const centerY = positionRef.current.y + oldSize / 2;
-            const dragBounds = getStickerDragBounds(canvasWidth, canvasHeight, newSize, hitFrame);
+            const dragBounds = allowVisibleOverflowDrag
+              ? getStickerLayoutDragBounds(canvasWidth, canvasHeight, newSize)
+              : getStickerDragBounds(canvasWidth, canvasHeight, newSize, hitFrame);
             const nextX = clamp(centerX - newSize / 2, dragBounds.minX, dragBounds.maxX);
             const nextY = clamp(centerY - newSize / 2, dragBounds.minY, dragBounds.maxY);
 
@@ -1493,7 +1555,9 @@ function DraggableSticker({
           }
 
           if (gestureModeRef.current === 'pinch') return;
-          const dragBounds = getStickerDragBounds(canvasWidth, canvasHeight, stickerSize, hitFrame);
+          const dragBounds = allowVisibleOverflowDrag
+            ? getStickerLayoutDragBounds(canvasWidth, canvasHeight, stickerSize)
+            : getStickerDragBounds(canvasWidth, canvasHeight, stickerSize, hitFrame);
           const nextX = clamp(
             gestureStartPositionRef.current.x + gestureState.dx,
             dragBounds.minX,
@@ -1560,7 +1624,9 @@ function DraggableSticker({
           }
 
           clearEdgeHold();
-          const dragBounds = getStickerDragBounds(canvasWidth, canvasHeight, stickerSize, hitFrame);
+          const dragBounds = allowVisibleOverflowDrag
+            ? getStickerLayoutDragBounds(canvasWidth, canvasHeight, stickerSize)
+            : getStickerDragBounds(canvasWidth, canvasHeight, stickerSize, hitFrame);
           const finalX = clamp(positionRef.current.x, dragBounds.minX, dragBounds.maxX);
           const finalY = clamp(positionRef.current.y, dragBounds.minY, dragBounds.maxY);
 
@@ -1575,6 +1641,7 @@ function DraggableSticker({
       }),
     [
       isSelected,
+      allowVisibleOverflowDrag,
       canvasWidth,
       canvasHeight,
       canvasScreenFrame,
@@ -1609,10 +1676,10 @@ function DraggableSticker({
       style={[
         styles.draggableSticker,
         {
-          width: stickerSize,
-          height: stickerSize,
-          left: currentPos.x,
-          top: currentPos.y,
+          left: currentPos.x + touchFrame.left,
+          top: currentPos.y + touchFrame.top,
+          width: touchFrame.width,
+          height: touchFrame.height,
           zIndex: currentZIndex,
           transform: [
             { translateX: pan.x },
@@ -1625,13 +1692,13 @@ function DraggableSticker({
         isCommittingDrop && styles.stickerCommittingDrop,
       ]}
     >
-      <Image
-        source={{ uri: sticker.image_url }}
+      <CachedStickerImage
+        uri={sticker.image_url}
         style={[
           styles.stickerImage,
           {
-            left: -(stickerRenderSize - stickerSize) / 2,
-            top: -(stickerRenderSize - stickerSize) / 2,
+            left: -(stickerRenderSize - stickerSize) / 2 - touchFrame.left,
+            top: -(stickerRenderSize - stickerSize) / 2 - touchFrame.top,
             width: stickerRenderSize,
             height: stickerRenderSize,
             transform: [
@@ -1647,8 +1714,8 @@ function DraggableSticker({
         style={[
           styles.stickerHitArea,
           {
-            left: hitFrame.left,
-            top: hitFrame.top,
+            left: hitFrame.left - touchFrame.left,
+            top: hitFrame.top - touchFrame.top,
             width: hitFrame.width,
             height: hitFrame.height,
             transform: [{ rotate: `${currentRotation}deg` }],
@@ -1696,10 +1763,12 @@ export default function BookDetailScreen() {
   const [isStickerSelected, setIsStickerSelected] = useState(false);
   const [selectedCanvasItemType, setSelectedCanvasItemType] = useState<CanvasSelectionType>(null);
   const [selectionAction, setSelectionAction] = useState<SelectionAction | null>(null);
+  const [clearSelectionNonce, setClearSelectionNonce] = useState(0);
   const [canvasScreenFrame, setCanvasScreenFrame] = useState<CanvasScreenFrame>(null);
 
   const [showAddSheet, setShowAddSheet] = useState(false);
   const [showShareSheet, setShowShareSheet] = useState(false);
+  const [showPageColorSheet, setShowPageColorSheet] = useState(false);
   const [showElementComposer, setShowElementComposer] = useState(false);
   const [pendingElementType, setPendingElementType] = useState<BookPageElementType>('note');
   const [elementDraft, setElementDraft] = useState('');
@@ -1723,6 +1792,58 @@ export default function BookDetailScreen() {
   const initialPageRef = useRef(currentPage);
   const loadedPagesRef = useRef(new Set<number>());
   const pageLoadPromisesRef = useRef(new Map<number, Promise<void>>());
+  const currentBookRef = useRef<Book | null>(null);
+
+  const clearCanvasSelection = useCallback(() => {
+    setIsStickerSelected(false);
+    setSelectedCanvasItemType(null);
+    setSelectionAction(null);
+    setClearSelectionNonce((value) => value + 1);
+  }, []);
+
+  const applyBookToState = useCallback((book: Book) => {
+    currentBookRef.current = book;
+    setBookTheme(book.theme || DEFAULT_COVER_THEME);
+    setBookPageColor(normalizeAccentColor(book.page_color || book.accent_color || book.cover_color));
+    setDisplayBookName(book.name || bookName || 'Book');
+  }, [bookName]);
+
+  const cachePageSnapshot = useCallback((
+    pageIndex: number,
+    stickers: Sticker[],
+    elements: BookPageElement[]
+  ) => {
+    if (!bookId) return;
+    setCachedBookPage(bookId, pageIndex, stickers, elements);
+  }, [bookId]);
+
+  const hydrateInitialPageFromCache = useCallback(async () => {
+    if (!bookId) return false;
+
+    const [cachedBook, cachedPage] = await Promise.all([
+      getCachedBookDetail(bookId),
+      getCachedBookPage(bookId, initialPageRef.current),
+    ]);
+
+    let didHydrate = false;
+
+    if (cachedBook) {
+      applyBookToState(cachedBook);
+      didHydrate = true;
+    }
+
+    if (cachedPage) {
+      setPages((prev) => ({ ...prev, [initialPageRef.current]: cachedPage.stickers }));
+      setPageElements((prev) => ({ ...prev, [initialPageRef.current]: cachedPage.elements }));
+      didHydrate = true;
+    }
+
+    if (didHydrate) {
+      setLoading(false);
+    }
+
+    return didHydrate;
+  }, [applyBookToState, bookId]);
 
   const loadPage = useCallback(async (pageIndex: number, force = false) => {
     if (!bookId) return;
@@ -1732,6 +1853,14 @@ export default function BookDetailScreen() {
     if (existingRequest) {
       await existingRequest;
       if (!force) return;
+    }
+
+    if (!force) {
+      const cachedPage = await getCachedBookPage(bookId, pageIndex);
+      if (cachedPage) {
+        setPages((prev) => ({ ...prev, [pageIndex]: cachedPage.stickers }));
+        setPageElements((prev) => ({ ...prev, [pageIndex]: cachedPage.elements }));
+      }
     }
 
     setLoadingPageIndexes((prev) => new Set(prev).add(pageIndex));
@@ -1752,6 +1881,7 @@ export default function BookDetailScreen() {
 
         setPages((prev) => ({ ...prev, [pageIndex]: stickersResult.stickers }));
         setPageElements((prev) => ({ ...prev, [pageIndex]: elementsResult.elements }));
+        cachePageSnapshot(pageIndex, stickersResult.stickers, elementsResult.elements);
         loadedPagesRef.current.add(pageIndex);
       } catch (error) {
         console.error(`Error fetching page ${pageIndex + 1}:`, error);
@@ -1767,32 +1897,41 @@ export default function BookDetailScreen() {
 
     pageLoadPromisesRef.current.set(pageIndex, request);
     await request;
-  }, [bookId]);
+  }, [bookId, cachePageSnapshot]);
 
   const fetchInitialPage = useCallback(async () => {
     if (!bookId) return;
 
     try {
+      await hydrateInitialPageFromCache();
+
       const [bookResult] = await Promise.all([
         getBookForDetail(bookId),
         loadPage(initialPageRef.current, true),
       ]);
 
       if (bookResult.book) {
-        setBookTheme(bookResult.book.theme || DEFAULT_COVER_THEME);
-        setBookPageColor(normalizeAccentColor(bookResult.book.page_color || bookResult.book.accent_color || bookResult.book.cover_color));
-        setDisplayBookName(bookResult.book.name || bookName || 'Book');
+        applyBookToState(bookResult.book);
+        setCachedBookDetail(bookId, bookResult.book);
       }
     } catch (error) {
       console.error('Error fetching initial book page:', error);
     } finally {
       setLoading(false);
     }
-  }, [bookId, bookName, loadPage]);
+  }, [applyBookToState, bookId, hydrateInitialPageFromCache, loadPage]);
 
   useEffect(() => {
     fetchInitialPage();
   }, [fetchInitialPage]);
+
+  useFocusEffect(
+    useCallback(() => {
+      return () => {
+        clearCanvasSelection();
+      };
+    }, [clearCanvasSelection])
+  );
 
   useEffect(() => {
     if (loading) return;
@@ -1818,10 +1957,9 @@ export default function BookDetailScreen() {
   const goToPage = useCallback((page: number) => {
     if (page < 0 || page > 4) return;
     Haptics.selectionAsync();
+    clearCanvasSelection();
     setCurrentPage(page);
     setIsArrangeMode(false);
-    setIsStickerSelected(false);
-    setSelectedCanvasItemType(null);
     pagePanRef.current = { x: 0, y: 0 };
     pageZoomRef.current = 1;
     setPageZoom(1);
@@ -1835,7 +1973,7 @@ export default function BookDetailScreen() {
       damping: 20,
       useNativeDriver: true,
     }).start();
-  }, [swipeAnim, pageZoomAnim, pagePanXAnim, pagePanYAnim]);
+  }, [clearCanvasSelection, swipeAnim, pageZoomAnim, pagePanXAnim, pagePanYAnim]);
 
   const clampPagePan = useCallback((x: number, y: number, zoom = pageZoomRef.current) => {
     const maxX = Math.max(0, (canvasSize.width * (zoom - 1)) / 2);
@@ -1991,9 +2129,10 @@ export default function BookDetailScreen() {
         ...pageStickers.filter((s) => s.id !== id),
         { ...movedSticker, pos_x, pos_y, rotation, metadata: { ...(movedSticker.metadata || {}), bookScale } },
       ];
+      cachePageSnapshot(currentPage, newPages[currentPage], pageElements[currentPage] || []);
       return newPages;
     });
-  }, [currentPage]);
+  }, [cachePageSnapshot, currentPage, pageElements]);
 
   const handleStickerMoveToAdjacentPage = useCallback(async (
     id: string,
@@ -2026,6 +2165,18 @@ export default function BookDetailScreen() {
       next[targetPage] = [...(next[targetPage] || []), movedSticker];
       return next;
     });
+    cachePageSnapshot(
+      currentPage,
+      (pages[currentPage] || []).filter((sticker) => sticker.id !== id),
+      pageElements[currentPage] || []
+    );
+    if (loadedPagesRef.current.has(targetPage)) {
+      cachePageSnapshot(
+        targetPage,
+        [...(pages[targetPage] || []), movedSticker],
+        pageElements[targetPage] || []
+      );
+    }
     setCurrentPage(targetPage);
     setIsStickerSelected(false);
     setSelectedCanvasItemType(null);
@@ -2046,7 +2197,7 @@ export default function BookDetailScreen() {
     } else {
       await loadPage(targetPage, true);
     }
-  }, [currentPage, loadPage, pages]);
+  }, [cachePageSnapshot, currentPage, loadPage, pageElements, pages]);
 
   const handleElementMove = useCallback((id: string, pos_x: number, pos_y: number, rotation: number, scale: number) => {
     setPageElements((prev) => {
@@ -2057,9 +2208,10 @@ export default function BookDetailScreen() {
           ? { ...element, pos_x, pos_y, rotation, style: { ...(element.style || {}), scale } }
           : element
       );
+      cachePageSnapshot(currentPage, pages[currentPage] || [], next[currentPage]);
       return next;
     });
-  }, [currentPage]);
+  }, [cachePageSnapshot, currentPage, pages]);
 
   const handleElementMoveToAdjacentPage = useCallback(async (
     id: string,
@@ -2092,6 +2244,18 @@ export default function BookDetailScreen() {
       next[targetPage] = [...(next[targetPage] || []), movedElement];
       return next;
     });
+    cachePageSnapshot(
+      currentPage,
+      pages[currentPage] || [],
+      (pageElements[currentPage] || []).filter((element) => element.id !== id)
+    );
+    if (loadedPagesRef.current.has(targetPage)) {
+      cachePageSnapshot(
+        targetPage,
+        pages[targetPage] || [],
+        [...(pageElements[targetPage] || []), movedElement]
+      );
+    }
     setCurrentPage(targetPage);
     setIsStickerSelected(false);
     setSelectedCanvasItemType(null);
@@ -2110,19 +2274,20 @@ export default function BookDetailScreen() {
     } else {
       await loadPage(targetPage, true);
     }
-  }, [currentPage, loadPage, pageElements]);
+  }, [cachePageSnapshot, currentPage, loadPage, pageElements, pages]);
 
   const handleElementDelete = useCallback(async (id: string) => {
     await deleteBookPageElement(id);
     setPageElements((prev) => {
       const next = { ...prev };
       next[currentPage] = (next[currentPage] || []).filter((element) => element.id !== id);
+      cachePageSnapshot(currentPage, pages[currentPage] || [], next[currentPage]);
       return next;
     });
     setIsStickerSelected(false);
     setSelectedCanvasItemType(null);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-  }, [currentPage]);
+  }, [cachePageSnapshot, currentPage, pages]);
 
   const handleStickerPeelOff = useCallback(async (id: string) => {
     await removeStickerFromPage(id);
@@ -2130,12 +2295,13 @@ export default function BookDetailScreen() {
       const newPages = { ...prev };
       const pageStickers = newPages[currentPage] || [];
       newPages[currentPage] = pageStickers.filter((s) => s.id !== id);
+      cachePageSnapshot(currentPage, newPages[currentPage], pageElements[currentPage] || []);
       return newPages;
     });
     setIsStickerSelected(false);
     setSelectedCanvasItemType(null);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-  }, [currentPage]);
+  }, [cachePageSnapshot, currentPage, pageElements]);
 
   const handleCanvasLayout = useCallback((event: { nativeEvent: { layout: { width: number; height: number } } }) => {
     setCanvasSize({
@@ -2219,6 +2385,7 @@ export default function BookDetailScreen() {
             ? { ...element, content: nextContent, color: nextColor, style: nextStyle ? { ...(element.style || {}), ...nextStyle } : element.style }
             : element
         );
+        cachePageSnapshot(editingElement.page_index, pages[editingElement.page_index] || [], next[editingElement.page_index]);
         return next;
       });
       setShowElementComposer(false);
@@ -2245,15 +2412,19 @@ export default function BookDetailScreen() {
       return;
     }
 
-    setPageElements((prev) => ({
-      ...prev,
-      [currentPage]: [...(prev[currentPage] || []), element],
-    }));
+    setPageElements((prev) => {
+      const next = {
+        ...prev,
+        [currentPage]: [...(prev[currentPage] || []), element],
+      };
+      cachePageSnapshot(currentPage, pages[currentPage] || [], next[currentPage]);
+      return next;
+    });
     setShowElementComposer(false);
     setEditingElement(null);
     setElementDraft('');
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-  }, [bookId, currentPage, editingElement, elementDraft, elementDraftColor, pendingElementType]);
+  }, [bookId, cachePageSnapshot, currentPage, editingElement, elementDraft, elementDraftColor, pages, pendingElementType]);
 
   const handleSelectUnplacedSticker = useCallback(async (sticker: Sticker) => {
     if (!bookId) return;
@@ -2277,6 +2448,7 @@ export default function BookDetailScreen() {
       const newPages = { ...prev };
       const pageStickers = newPages[currentPage] || [];
       newPages[currentPage] = [...pageStickers, placedSticker];
+      cachePageSnapshot(currentPage, newPages[currentPage], pageElements[currentPage] || []);
       return newPages;
     });
 
@@ -2285,7 +2457,7 @@ export default function BookDetailScreen() {
 
     setUnplacedStickers((prev) => prev.filter((item) => item.id !== sticker.id));
     setShowUnplacedPicker(false);
-  }, [bookId, currentPage]);
+  }, [bookId, cachePageSnapshot, currentPage, pageElements]);
 
   const handleSnapNowFromPicker = useCallback(() => {
     setShowUnplacedPicker(false);
@@ -2356,6 +2528,10 @@ export default function BookDetailScreen() {
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', async (state) => {
+      if (state !== 'active') {
+        clearCanvasSelection();
+      }
+
       if (state !== 'active' || !pendingPhotoSaveAfterSettingsRef.current) return;
 
       const permission = await MediaLibrary.getPermissionsAsync(true);
@@ -2369,11 +2545,33 @@ export default function BookDetailScreen() {
     });
 
     return () => subscription.remove();
-  }, [savePageImageToLibrary]);
+  }, [clearCanvasSelection, savePageImageToLibrary]);
 
   const handleSharePress = useCallback(() => {
     setShowShareSheet(true);
   }, []);
+
+  const handlePageColorSelect = useCallback(async (color: string) => {
+    if (!bookId) return;
+
+    const previousColor = bookPageColor;
+    setBookPageColor(color);
+    setShowPageColorSheet(false);
+
+    const { error } = await updateBookPageColor(bookId, color);
+    if (error) {
+      console.error('Error updating book page color:', error);
+      setBookPageColor(previousColor);
+      Alert.alert('エラー', 'ページカラーの更新に失敗しました');
+      return;
+    }
+
+    if (currentBookRef.current) {
+      const nextBook = { ...currentBookRef.current, page_color: color };
+      currentBookRef.current = nextBook;
+      setCachedBookDetail(bookId, nextBook);
+    }
+  }, [bookId, bookPageColor]);
 
   const requestStickerSelectionAction = useCallback((type: SelectionAction['type']) => {
     setSelectionAction({ type, nonce: Date.now() });
@@ -2474,6 +2672,7 @@ export default function BookDetailScreen() {
               pagePanY={pagePan.y}
               canvasScreenFrame={canvasScreenFrame}
               currentPage={currentPage}
+              clearSelectionNonce={clearSelectionNonce}
               newlyPlacedId={newlyPlacedId}
               pageTheme={bookTheme}
               accentColor={bookPageColor}
@@ -2518,8 +2717,8 @@ export default function BookDetailScreen() {
       onPress={() => handleSelectUnplacedSticker(item)}
       activeOpacity={0.7}
     >
-      <Image
-        source={{ uri: item.image_url }}
+      <CachedStickerImage
+        uri={item.thumbnail_url || item.image_url}
         style={styles.pickerItemImage}
         resizeMode="cover"
       />
@@ -2554,11 +2753,9 @@ export default function BookDetailScreen() {
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.headerIconButton}
-            onPress={() => setIsArrangeMode(!isArrangeMode)}
+            onPress={() => setShowPageColorSheet(true)}
           >
-            <Text style={[styles.headerActionText, isArrangeMode && styles.headerActionTextActive]}>
-              {isArrangeMode ? '✓' : '…'}
-            </Text>
+            <Text style={styles.headerActionText}>…</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -2666,6 +2863,50 @@ export default function BookDetailScreen() {
             <TouchableOpacity
               style={styles.sheetCancelButton}
               onPress={() => setShowShareSheet(false)}
+            >
+              <Text style={styles.sheetCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      <Modal
+        visible={showPageColorSheet}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowPageColorSheet(false)}
+      >
+        <TouchableOpacity
+          style={styles.sheetOverlay}
+          activeOpacity={1}
+          onPress={() => setShowPageColorSheet(false)}
+        >
+          <View style={styles.bottomSheet}>
+            <View style={styles.sheetHandle} />
+            <Text style={styles.sheetTitle}>Page color</Text>
+            <View style={styles.pageColorGrid}>
+              {PEELZY_COLORS.map((color) => {
+                const isActive = normalizeAccentColor(bookPageColor) === color;
+                return (
+                  <TouchableOpacity
+                    key={color}
+                    style={[
+                      styles.pageColorChoice,
+                      { backgroundColor: color },
+                      isActive && styles.pageColorChoiceActive,
+                    ]}
+                    onPress={() => handlePageColorSelect(color)}
+                    activeOpacity={0.82}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Change page color to ${color}`}
+                  />
+                );
+              })}
+            </View>
+
+            <TouchableOpacity
+              style={styles.sheetCancelButton}
+              onPress={() => setShowPageColorSheet(false)}
             >
               <Text style={styles.sheetCancelText}>Cancel</Text>
             </TouchableOpacity>
@@ -3671,6 +3912,25 @@ const styles = StyleSheet.create({
   elementColorChoiceActive: {
     borderColor: '#1E1E1E',
     borderWidth: 3,
+  },
+  pageColorGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 12,
+    paddingHorizontal: 8,
+    paddingBottom: 8,
+  },
+  pageColorChoice: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    borderWidth: 2,
+    borderColor: 'rgba(48, 37, 31, 0.12)',
+  },
+  pageColorChoiceActive: {
+    borderColor: '#1E1E1E',
+    borderWidth: 4,
   },
   composerActions: {
     flexDirection: 'row',

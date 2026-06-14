@@ -5,7 +5,6 @@ import {
   StyleSheet,
   FlatList,
   TouchableOpacity,
-  Image,
   Modal,
   Dimensions,
   ActivityIndicator,
@@ -22,6 +21,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import * as Linking from 'expo-linking';
 import * as Haptics from 'expo-haptics';
 import { useAuth } from '../../contexts/AuthContext';
+import CachedStickerImage from '../../components/CachedStickerImage';
 import { theme } from '../../constants/theme';
 import {
   acceptExchangeProposal,
@@ -87,8 +87,8 @@ const StickerCell = memo(function StickerCell({ sticker, onPress, hasActiveOffer
       onPress={handlePress}
       activeOpacity={0.8}
     >
-      <Image
-        source={{ uri: getStickerThumbnailUrl(sticker) }}
+      <CachedStickerImage
+        uri={getStickerThumbnailUrl(sticker)}
         style={imageStyle}
         resizeMode="contain"
       />
@@ -771,7 +771,7 @@ export default function CollectionScreen() {
         >
           <View style={styles.offerStickerFrame}>
             {item.sticker ? (
-              <Image source={{ uri: item.sticker.image_url }} style={styles.offerStickerImage} />
+              <CachedStickerImage uri={item.sticker.image_url} style={styles.offerStickerImage} />
             ) : (
               <View style={styles.thumbnailPlaceholder} />
             )}
@@ -834,14 +834,14 @@ export default function CollectionScreen() {
                   <View style={styles.exchangePreview}>
                     <View style={styles.exchangeStickerBox}>
                       {item.sticker && (
-                        <Image source={{ uri: item.sticker.image_url }} style={styles.exchangeStickerImage} />
+                        <CachedStickerImage uri={item.sticker.image_url} style={styles.exchangeStickerImage} />
                       )}
                       <Text style={styles.exchangeStickerLabel}>Your sticker</Text>
                     </View>
                     <Text style={styles.exchangeArrow}>⇄</Text>
                     <View style={styles.exchangeStickerBox}>
                       {proposal.offered_sticker && (
-                        <Image source={{ uri: proposal.offered_sticker.image_url }} style={styles.exchangeStickerImage} />
+                        <CachedStickerImage uri={proposal.offered_sticker.image_url} style={styles.exchangeStickerImage} />
                       )}
                       <Text style={styles.exchangeStickerLabel}>Their sticker</Text>
                     </View>
@@ -1022,8 +1022,8 @@ export default function CollectionScreen() {
               {selectedSticker && (
                 <>
                   <View style={styles.modalImageContainer}>
-                    <Image
-                      source={{ uri: selectedSticker.image_url }}
+                    <CachedStickerImage
+                      uri={selectedSticker.image_url}
                       style={styles.modalImage}
                       resizeMode="contain"
                     />
@@ -1240,14 +1240,14 @@ export default function CollectionScreen() {
             <View style={styles.exchangeResultImages}>
               <View style={styles.exchangeResultImageBox}>
                 {exchangeResult?.sent && (
-                  <Image source={{ uri: exchangeResult.sent.image_url }} style={styles.exchangeResultImage} />
+                  <CachedStickerImage uri={exchangeResult.sent.image_url} style={styles.exchangeResultImage} />
                 )}
                 <Text style={styles.exchangeResultLabel}>Sent away</Text>
               </View>
               <Text style={styles.exchangeResultSpark}>→</Text>
               <View style={styles.exchangeResultImageBox}>
                 {exchangeResult?.received && (
-                  <Image source={{ uri: exchangeResult.received.image_url }} style={styles.exchangeResultImage} />
+                  <CachedStickerImage uri={exchangeResult.received.image_url} style={styles.exchangeResultImage} />
                 )}
                 <Text style={styles.exchangeResultLabel}>Newly yours</Text>
               </View>

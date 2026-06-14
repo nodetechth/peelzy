@@ -4,7 +4,6 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  Image,
   Dimensions,
   TextInput,
   Alert,
@@ -47,10 +46,11 @@ import {
   restorePeelzyPlus,
   syncRevenueCatStatus,
 } from '../../lib/revenuecat';
+import { warmStickerImageCache } from '../../lib/stickerImageCache';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const CARD_WIDTH = Math.min(300, SCREEN_WIDTH * 0.72);
-const CARD_HEIGHT = 390;
+const CARD_WIDTH = Math.min(340, SCREEN_WIDTH * 0.82);
+const CARD_HEIGHT = 430;
 const TAB_BAR_HEIGHT = 80;
 const COVER_THEMES: Array<{ id: CoverTheme; label: string }> = [
   { id: 'classic', label: 'Classic' },
@@ -113,6 +113,7 @@ export default function HomeScreen() {
     }
 
     setBooks(fetchedBooks);
+    warmStickerImageCache(fetchedBooks.flatMap((book) => book.thumbnails.map((sticker) => sticker.image_url)));
     setLoading(false);
   }, [user?.id]);
 
@@ -127,7 +128,7 @@ export default function HomeScreen() {
       return;
     }
 
-    await Promise.allSettled(urls.map((url) => Image.prefetch(url)));
+    warmStickerImageCache(urls);
   }, []);
 
   useEffect(() => {
@@ -257,6 +258,7 @@ export default function HomeScreen() {
     setSavingBookSettings(false);
 
     if (error) {
+      console.error('Error updating book settings:', error);
       Alert.alert('エラー', 'Book設定の更新に失敗しました');
       return;
     }

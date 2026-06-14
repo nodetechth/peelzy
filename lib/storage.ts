@@ -5,6 +5,11 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import { CoverTheme, DEFAULT_ACCENT_COLOR, DEFAULT_COVER_THEME } from '../components/BookCover/types';
 
 const STICKER_THUMBNAIL_MAX_EDGE = 320;
+const STICKER_STORAGE_CACHE_CONTROL_SECONDS = '31536000';
+const STICKER_DISPLAY_COLUMNS =
+  'id, user_id, image_url, thumbnail_url, page_index, pos_x, pos_y, rotation, book_id, created_at, metadata';
+const BOOK_PAGE_ELEMENT_DISPLAY_COLUMNS =
+  'id, user_id, book_id, page_index, type, content, pos_x, pos_y, rotation, color, style, created_at, updated_at';
 
 function generateUUID(): string {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
@@ -283,6 +288,7 @@ export async function uploadSticker(
       .from('stickers')
       .upload(fileName, stickerFileData, {
         contentType: 'image/png',
+        cacheControl: STICKER_STORAGE_CACHE_CONTROL_SECONDS,
         upsert: false,
       });
 
@@ -350,6 +356,7 @@ export async function createStickerThumbnail(
       .from('stickers')
       .upload(fileName, thumbnailData, {
         contentType: 'image/png',
+        cacheControl: STICKER_STORAGE_CACHE_CONTROL_SECONDS,
         upsert: true,
       });
 
@@ -570,7 +577,7 @@ export async function getBooksForHome(): Promise<{ books: BookHomeSummary[]; err
         stickerCounts.set(sticker.book_id, (stickerCounts.get(sticker.book_id) || 0) + 1);
 
         const bookThumbnails = thumbnails.get(sticker.book_id) || [];
-        if (bookThumbnails.length < 4) {
+        if (bookThumbnails.length < 5) {
           bookThumbnails.push({
             id: sticker.id,
             image_url: sticker.thumbnail_url || sticker.image_url,
@@ -689,6 +696,11 @@ export async function updateBookSettings(
   input: { name: string; theme: CoverTheme; accentColor: string; pageColor: string }
 ): Promise<{ error: Error | null }> {
   try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      return { error: new Error('User not authenticated') };
+    }
+
     const { error } = await supabase
       .from('books')
       .update({
@@ -697,7 +709,31 @@ export async function updateBookSettings(
         accent_color: input.accentColor,
         page_color: input.pageColor,
       })
-      .eq('id', id);
+      .eq('id', id)
+      .eq('user_id', user.id);
+
+    if (error) {
+      return { error };
+    }
+
+    return { error: null };
+  } catch (error) {
+    return { error: error as Error };
+  }
+}
+
+export async function updateBookPageColor(id: string, pageColor: string): Promise<{ error: Error | null }> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      return { error: new Error('User not authenticated') };
+    }
+
+    const { error } = await supabase
+      .from('books')
+      .update({ page_color: pageColor })
+      .eq('id', id)
+      .eq('user_id', user.id);
 
     if (error) {
       return { error };
@@ -791,7 +827,7 @@ export async function getStickersInBookByPage(
   try {
     const { data, error } = await supabase
       .from('stickers')
-      .select('*')
+      .select(STICKER_DISPLAY_COLUMNS)
       .eq('book_id', bookId)
       .eq('page_index', pageIndex)
       .order('created_at', { ascending: false });
@@ -1069,7 +1105,7 @@ export async function getBookPageElementsByPage(
   try {
     const { data, error } = await supabase
       .from('book_page_elements')
-      .select('*')
+      .select(BOOK_PAGE_ELEMENT_DISPLAY_COLUMNS)
       .eq('book_id', bookId)
       .eq('page_index', pageIndex)
       .order('created_at', { ascending: true });
