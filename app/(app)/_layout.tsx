@@ -1,7 +1,9 @@
-import { View, StyleSheet } from 'react-native';
+import { DeviceEventEmitter, View, StyleSheet, Text } from 'react-native';
 import { Tabs } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Path, Circle } from 'react-native-svg';
+import { SNAP_TAB_PRESS_EVENT } from '../../lib/snapEvents';
+import { theme } from '../../constants/theme';
 
 function HomeIcon({ color, size }: { color: string; size: number }) {
   return (
@@ -37,7 +39,9 @@ function SnapButton({ focused }: { focused: boolean }) {
   return (
     <View style={styles.snapButtonContainer}>
       <View style={[styles.snapButtonOuter, focused && styles.snapButtonOuterActive]}>
-        <View style={styles.snapButtonInner} />
+        <View style={styles.snapButtonInner}>
+          <Text style={styles.snapButtonStar}>✿</Text>
+        </View>
       </View>
     </View>
   );
@@ -45,7 +49,7 @@ function SnapButton({ focused }: { focused: boolean }) {
 
 export default function AppLayout() {
   const insets = useSafeAreaInsets();
-  const tabBarHeight = 80 + insets.bottom;
+  const tabBarHeight = 52 + insets.bottom;
 
   return (
     <Tabs
@@ -53,14 +57,19 @@ export default function AppLayout() {
         headerShown: false,
         tabBarStyle: {
           position: 'absolute',
-          backgroundColor: '#111111',
-          borderTopWidth: 0.5,
-          borderTopColor: 'rgba(255,255,255,0.08)',
+          backgroundColor: theme.colors.background,
+          borderTopWidth: 1,
+          borderTopColor: theme.colors.line,
           height: tabBarHeight,
-          paddingBottom: insets.bottom,
+          paddingBottom: Math.max(insets.bottom - 6, 4),
+          shadowColor: '#7D695C',
+          shadowOffset: { width: 0, height: -4 },
+          shadowOpacity: 0.08,
+          shadowRadius: 18,
+          elevation: 12,
         },
-        tabBarActiveTintColor: '#A78BFA',
-        tabBarInactiveTintColor: '#555555',
+        tabBarActiveTintColor: theme.colors.purple,
+        tabBarInactiveTintColor: '#87827C',
         tabBarShowLabel: false,
       }}
     >
@@ -75,6 +84,13 @@ export default function AppLayout() {
         options={{
           tabBarIcon: ({ focused }) => <SnapButton focused={focused} />,
         }}
+        listeners={({ navigation }) => ({
+          tabPress: () => {
+            if (navigation.isFocused()) {
+              DeviceEventEmitter.emit(SNAP_TAB_PRESS_EVENT);
+            }
+          },
+        })}
       />
       <Tabs.Screen
         name="collection"
@@ -114,23 +130,35 @@ export default function AppLayout() {
 const styles = StyleSheet.create({
   snapButtonContainer: {
     position: 'relative',
-    top: -8,
+    top: -4,
   },
   snapButtonOuter: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: '#FFFFFF',
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: theme.colors.background,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#6B5A51',
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  snapButtonOuterActive: {
+    backgroundColor: '#F7F0FF',
+  },
+  snapButtonInner: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: theme.colors.black,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  snapButtonOuterActive: {
-    backgroundColor: '#A78BFA',
-  },
-  snapButtonInner: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#000000',
+  snapButtonStar: {
+    color: theme.colors.purpleSoft,
+    fontSize: 23,
+    fontWeight: '900',
   },
 });

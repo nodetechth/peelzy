@@ -1,0 +1,21 @@
+{
+  "name": "peelzy-subject-lift",
+  "version": "0.1.0",
+  "description": "Apple Subject Lift native module for Peelzy.",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "author": "Peelzy",
+  "license": "UNLICENSED",
+  "private": true,
+  "expo-module": {
+    "ios": {
+      "modules": [
+        "PeelzySubjectLiftModule"
+      ]
+    }
+  },
+  "peerDependencies": {
+    "expo": "*",
+    "expo-modules-core": "*"
+  }
+}

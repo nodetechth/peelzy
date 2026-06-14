@@ -1,0 +1,21 @@
+{
+  "name": "peelzy-mlkit-subject-segmentation",
+  "version": "0.1.0",
+  "description": "Android ML Kit Subject Segmentation native module for Peelzy.",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "author": "Peelzy",
+  "license": "UNLICENSED",
+  "private": true,
+  "expo-module": {
+    "android": {
+      "modules": [
+        "com.peelzy.mlkitsubjectsegmentation.PeelzyMlkitSubjectSegmentationModule"
+      ]
+    }
+  },
+  "peerDependencies": {
+    "expo": "*",
+    "expo-modules-core": "*"
+  }
+}

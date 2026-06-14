@@ -11,6 +11,8 @@ import {
 } from 'react-native';
 import { Link } from 'expo-router';
 import { useAuth } from '../../contexts/AuthContext';
+import { theme } from '../../constants/theme';
+import AppleSignInButton from '../../components/auth/AppleSignInButton';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
@@ -20,7 +22,7 @@ export default function LoginScreen() {
 
   const handleLogin = async () => {
     if (!email || !password) {
-      Alert.alert('エラー', 'メールアドレスとパスワードを入力してください');
+      Alert.alert('Missing details', 'Enter your email and password to log in.');
       return;
     }
 
@@ -29,7 +31,7 @@ export default function LoginScreen() {
     setLoading(false);
 
     if (error) {
-      Alert.alert('ログインエラー', error.message);
+      Alert.alert('Could not log in', error.message);
     }
   };
 
@@ -39,11 +41,13 @@ export default function LoginScreen() {
       style={styles.container}
     >
       <View style={styles.inner}>
-        <Text style={styles.title}>ログイン</Text>
+        <Text style={styles.logo}>peelzy</Text>
+        <Text style={styles.title}>Log in</Text>
+        <Text style={styles.description}>Welcome back. Your sticker books are waiting.</Text>
 
         <TextInput
           style={styles.input}
-          placeholder="メールアドレス"
+          placeholder="Email"
           value={email}
           onChangeText={setEmail}
           autoCapitalize="none"
@@ -53,7 +57,7 @@ export default function LoginScreen() {
 
         <TextInput
           style={styles.input}
-          placeholder="パスワード"
+          placeholder="Password"
           value={password}
           onChangeText={setPassword}
           secureTextEntry
@@ -66,14 +70,24 @@ export default function LoginScreen() {
           disabled={loading}
         >
           <Text style={styles.buttonText}>
-            {loading ? 'ログイン中...' : 'ログイン'}
+            {loading ? 'Logging in...' : 'Log in'}
           </Text>
         </TouchableOpacity>
+
+        <View style={styles.appleButtonWrap}>
+          <AppleSignInButton mode="signIn" />
+        </View>
+
+        <Link href="/(auth)/forgot-password" asChild>
+          <TouchableOpacity style={styles.forgotButton}>
+            <Text style={styles.forgotText}>Forgot password?</Text>
+          </TouchableOpacity>
+        </Link>
 
         <Link href="/(auth)/signup" asChild>
           <TouchableOpacity style={styles.linkButton}>
             <Text style={styles.linkText}>
-              アカウントをお持ちでない方はこちら
+              New to Peelzy? Create an account
             </Text>
           </TouchableOpacity>
         </Link>
@@ -85,50 +99,80 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: theme.colors.background,
   },
   inner: {
     flex: 1,
     justifyContent: 'center',
     paddingHorizontal: 24,
   },
-  title: {
-    fontSize: 28,
-    fontWeight: 'bold',
+  logo: {
+    fontFamily: theme.fonts.black,
+    fontSize: 26,
+    color: theme.colors.text,
     textAlign: 'center',
-    marginBottom: 32,
+    marginBottom: 24,
+  },
+  title: {
+    fontFamily: theme.fonts.black,
+    color: theme.colors.text,
+    fontSize: 34,
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  description: {
+    fontFamily: theme.fonts.semibold,
+    color: theme.colors.textMuted,
+    fontSize: 16,
+    lineHeight: 23,
+    textAlign: 'center',
+    marginBottom: 30,
   },
   input: {
-    height: 50,
+    height: 54,
     borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
+    borderColor: theme.colors.line,
+    backgroundColor: theme.colors.surface,
+    borderRadius: 18,
     paddingHorizontal: 16,
     marginBottom: 16,
     fontSize: 16,
   },
   button: {
-    backgroundColor: '#000',
-    height: 50,
-    borderRadius: 8,
+    backgroundColor: theme.colors.purple,
+    height: 56,
+    borderRadius: 28,
     justifyContent: 'center',
     alignItems: 'center',
     marginTop: 8,
   },
   buttonDisabled: {
-    backgroundColor: '#999',
+    opacity: 0.55,
   },
   buttonText: {
     color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
+    fontFamily: theme.fonts.black,
+    fontSize: 17,
+  },
+  forgotButton: {
+    marginTop: 14,
+    alignItems: 'center',
+  },
+  appleButtonWrap: {
+    marginTop: 12,
+  },
+  forgotText: {
+    color: theme.colors.text,
+    fontFamily: theme.fonts.bold,
+    fontSize: 14,
   },
   linkButton: {
     marginTop: 24,
     alignItems: 'center',
   },
   linkText: {
-    color: '#666',
+    color: theme.colors.textMuted,
+    fontFamily: theme.fonts.semibold,
     fontSize: 14,
   },
 });

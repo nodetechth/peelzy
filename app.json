@@ -14,7 +14,13 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.takehiroh.Peelzy",
+      "usesAppleSignIn": true,
+      "buildNumber": "1",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -22,7 +28,18 @@
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_MEDIA_VIDEO",
+        "android.permission.READ_MEDIA_AUDIO"
+      ],
+      "package": "com.takehiroh.Peelzy"
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -33,9 +50,24 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "シールを撮影するためにカメラを使用します"
+          "cameraPermission": "Peelzy uses the camera to turn photos into stickers."
         }
-      ]
-    ]
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Peelzy uses photo access when you choose images or save page artwork.",
+          "savePhotosPermission": "Peelzy saves sticker book page images to your photo library when you ask it to."
+        }
+      ],
+      "expo-font",
+      "expo-apple-authentication"
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "2f75d1cd-d26e-4c61-ab0f-58fe70a255fe"
+      }
+    }
   }
 }

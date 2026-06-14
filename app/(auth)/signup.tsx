@@ -9,8 +9,10 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
-import { Link } from 'expo-router';
+import { Link, useRouter } from 'expo-router';
 import { useAuth } from '../../contexts/AuthContext';
+import { theme } from '../../constants/theme';
+import AppleSignInButton from '../../components/auth/AppleSignInButton';
 
 export default function SignupScreen() {
   const [email, setEmail] = useState('');
@@ -18,34 +20,37 @@ export default function SignupScreen() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const { signUp } = useAuth();
+  const router = useRouter();
 
   const handleSignup = async () => {
-    if (!email || !password) {
-      Alert.alert('エラー', 'メールアドレスとパスワードを入力してください');
+    const normalizedEmail = email.trim().toLowerCase();
+
+    if (!normalizedEmail || !password) {
+      Alert.alert('Missing details', 'Enter your email and password to create an account.');
       return;
     }
 
     if (password !== confirmPassword) {
-      Alert.alert('エラー', 'パスワードが一致しません');
+      Alert.alert('Passwords do not match', 'Please enter the same password twice.');
       return;
     }
 
     if (password.length < 6) {
-      Alert.alert('エラー', 'パスワードは6文字以上で入力してください');
+      Alert.alert('Password is too short', 'Use at least 6 characters.');
       return;
     }
 
     setLoading(true);
-    const { error } = await signUp(email, password);
+    const { error } = await signUp(normalizedEmail, password);
     setLoading(false);
 
     if (error) {
-      Alert.alert('登録エラー', error.message);
+      Alert.alert('Could not create account', error.message);
     } else {
-      Alert.alert(
-        '登録完了',
-        '確認メールを送信しました。メールを確認してアカウントを有効化してください。'
-      );
+      router.replace({
+        pathname: '/(auth)/check-email',
+        params: { email: normalizedEmail },
+      });
     }
   };
 
@@ -55,11 +60,13 @@ export default function SignupScreen() {
       style={styles.container}
     >
       <View style={styles.inner}>
-        <Text style={styles.title}>新規登録</Text>
+        <Text style={styles.logo}>peelzy</Text>
+        <Text style={styles.title}>Create account</Text>
+        <Text style={styles.description}>Save your stickers, decorate books, and trade favorites.</Text>
 
         <TextInput
           style={styles.input}
-          placeholder="メールアドレス"
+          placeholder="Email"
           value={email}
           onChangeText={setEmail}
           autoCapitalize="none"
@@ -69,7 +76,7 @@ export default function SignupScreen() {
 
         <TextInput
           style={styles.input}
-          placeholder="パスワード（6文字以上）"
+          placeholder="Password (6+ characters)"
           value={password}
           onChangeText={setPassword}
           secureTextEntry
@@ -78,7 +85,7 @@ export default function SignupScreen() {
 
         <TextInput
           style={styles.input}
-          placeholder="パスワード（確認）"
+          placeholder="Confirm password"
           value={confirmPassword}
           onChangeText={setConfirmPassword}
           secureTextEntry
@@ -91,17 +98,33 @@ export default function SignupScreen() {
           disabled={loading}
         >
           <Text style={styles.buttonText}>
-            {loading ? '登録中...' : '登録する'}
+            {loading ? 'Creating...' : 'Create account'}
           </Text>
         </TouchableOpacity>
+
+        <View style={styles.appleButtonWrap}>
+          <AppleSignInButton mode="signUp" />
+        </View>
 
         <Link href="/(auth)/login" asChild>
           <TouchableOpacity style={styles.linkButton}>
             <Text style={styles.linkText}>
-              すでにアカウントをお持ちの方はこちら
+              Already have an account? Log in
             </Text>
           </TouchableOpacity>
         </Link>
+
+        <Text style={styles.legalText}>
+          By creating an account, you agree to Peelzy's{' '}
+          <Link href="/(auth)/terms" asChild>
+            <Text style={styles.legalLink}>Terms</Text>
+          </Link>
+          {' '}and{' '}
+          <Link href="/(auth)/privacy" asChild>
+            <Text style={styles.legalLink}>Privacy Policy</Text>
+          </Link>
+          .
+        </Text>
       </View>
     </KeyboardAvoidingView>
   );
@@ -110,50 +133,84 @@ export default function SignupScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: theme.colors.background,
   },
   inner: {
     flex: 1,
     justifyContent: 'center',
     paddingHorizontal: 24,
   },
-  title: {
-    fontSize: 28,
-    fontWeight: 'bold',
+  logo: {
+    fontFamily: theme.fonts.black,
+    fontSize: 26,
+    color: theme.colors.text,
     textAlign: 'center',
-    marginBottom: 32,
+    marginBottom: 24,
+  },
+  title: {
+    fontFamily: theme.fonts.black,
+    color: theme.colors.text,
+    fontSize: 34,
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  description: {
+    fontFamily: theme.fonts.semibold,
+    color: theme.colors.textMuted,
+    fontSize: 16,
+    lineHeight: 23,
+    textAlign: 'center',
+    marginBottom: 30,
   },
   input: {
-    height: 50,
+    height: 54,
     borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
+    borderColor: theme.colors.line,
+    backgroundColor: theme.colors.surface,
+    borderRadius: 18,
     paddingHorizontal: 16,
     marginBottom: 16,
     fontSize: 16,
   },
   button: {
-    backgroundColor: '#000',
-    height: 50,
-    borderRadius: 8,
+    backgroundColor: theme.colors.purple,
+    height: 56,
+    borderRadius: 28,
     justifyContent: 'center',
     alignItems: 'center',
     marginTop: 8,
   },
   buttonDisabled: {
-    backgroundColor: '#999',
+    opacity: 0.55,
   },
   buttonText: {
     color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
+    fontFamily: theme.fonts.black,
+    fontSize: 17,
   },
   linkButton: {
     marginTop: 24,
     alignItems: 'center',
   },
+  appleButtonWrap: {
+    marginTop: 12,
+  },
   linkText: {
-    color: '#666',
+    color: theme.colors.textMuted,
+    fontFamily: theme.fonts.semibold,
     fontSize: 14,
+  },
+  legalText: {
+    marginTop: 22,
+    color: theme.colors.textMuted,
+    fontFamily: theme.fonts.medium,
+    fontSize: 12,
+    lineHeight: 18,
+    textAlign: 'center',
+  },
+  legalLink: {
+    color: theme.colors.purple,
+    fontFamily: theme.fonts.bold,
+    fontSize: 12,
   },
 });

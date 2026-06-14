@@ -1,0 +1,46 @@
+# Dependencies and local caches
+node_modules/
+.expo/
+.kotlin/
+.gradle/
+dist/
+web-build/
+expo-env.d.ts
+
+# Generated native projects. EAS prebuilds these from app.json and local modules.
+/ios/
+/android/
+
+# Local experiments and large model workspaces
+/pocs/
+/mobilesam-model/
+/mobilesam-env/
+/test-inputs/
+/test-outputs/
+
+# Backend sources and local documentation are not needed in the mobile build
+/supabase/
+/docs/
+/DEVELOPMENT_LOG.md
+
+# Local environment and credentials
+.env
+.env*.local
+*.jks
+*.p8
+*.p12
+*.key
+*.pem
+*.mobileprovision
+
+# Debug and generated files
+.git/
+.gitignore
+.DS_Store
+*.log
+*.orig.*
+*.tsbuildinfo
+.metro-health-check*
+npm-debug.*
+yarn-debug.*
+yarn-error.*

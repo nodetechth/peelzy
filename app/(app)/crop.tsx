@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -17,18 +17,124 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { getPhotoUrl, uploadSticker, Sticker, getBooks, Book, createBook } from '../../lib/storage';
-import { removeBackground } from '../../lib/clipdrop';
+import { uploadSticker, Sticker, getBooks, Book, createBook, placeStickerInBook, createStickerThumbnail } from '../../lib/storage';
+import { getEffectiveAccountStatus } from '../../lib/accountStatus';
+import { removeBackground, BackgroundRemovalProvider } from '../../lib/backgroundRemoval';
 import { useAuth } from '../../contexts/AuthContext';
-import { supabase } from '../../lib/supabase';
 import * as Haptics from 'expo-haptics';
+import * as ImageManipulator from 'expo-image-manipulator';
+import { captureRef } from 'react-native-view-shot';
+import Svg, { ClipPath, Defs, Image as SvgImage, Path, Rect } from 'react-native-svg';
+import {
+  DEFAULT_STICKER_FRAME_COLOR,
+  normalizeStickerFrameColor,
+  normalizeStickerFrameMode,
+  StickerFrameMode,
+} from '../../lib/stickerFrames';
+import { createFrameAlphaMask, createNativeAlphaMask } from '../../lib/stickerAlphaMask';
 
 const TAB_BAR_HEIGHT = 80;
+const STICKER_UPLOAD_MAX_EDGE = 1024;
+const FRAMED_STICKER_SQUARE_SIZE = 1024;
+const FRAMED_STICKER_ROUNDED_WIDTH = 1024;
+const FRAMED_STICKER_ROUNDED_HEIGHT = 768;
 
-const { height: SCREEN_HEIGHT } = Dimensions.get('window');
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const STICKER_MAX_WIDTH = 280;
+const FRAMED_PREVIEW_MAX_WIDTH = Math.min(340, SCREEN_WIDTH - 44);
 
-type ProcessingState = 'idle' | 'removing-bg' | 'uploading' | 'done' | 'error';
+type ProcessingState = 'idle' | 'preparing-frame' | 'removing-bg' | 'uploading' | 'done' | 'error';
+type ProcessingTimings = Record<string, number>;
+
+type BackgroundRemovalPreviewResult = {
+  error: Error | null;
+  provider: BackgroundRemovalProvider;
+  nativeResult?: {
+    uri: string;
+    subjectCount: number;
+    width: number;
+    height: number;
+    elapsedMs: number;
+    alphaMask?: string;
+    contentBounds?: {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    };
+  };
+};
+
+type FramedStickerCapture = {
+  uri: string;
+  width: number;
+  height: number;
+};
+
+function getNormalizedContentBounds(result?: BackgroundRemovalPreviewResult['nativeResult']) {
+  const bounds = result?.contentBounds;
+  if (!result?.width || !result?.height || !bounds) return undefined;
+
+  return {
+    x: Math.max(0, Math.min(1, bounds.x / result.width)),
+    y: Math.max(0, Math.min(1, bounds.y / result.height)),
+    width: Math.max(0, Math.min(1, bounds.width / result.width)),
+    height: Math.max(0, Math.min(1, bounds.height / result.height)),
+  };
+}
+
+function waitForProcessingScreen(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => resolve());
+    });
+  });
+}
+
+async function measureAsyncStep<T>(
+  timings: ProcessingTimings,
+  name: string,
+  task: () => Promise<T>
+): Promise<T> {
+  const startedAt = Date.now();
+  try {
+    return await task();
+  } finally {
+    timings[name] = Date.now() - startedAt;
+  }
+}
+
+function logProcessingTimings(
+  mode: StickerFrameMode,
+  outcome: 'success' | 'error',
+  timings: ProcessingTimings,
+  totalStartedAt: number
+) {
+  console.info('[StickerProcessingTiming]', {
+    mode,
+    outcome,
+    ...timings,
+    total_ms: Date.now() - totalStartedAt,
+  });
+}
+
+const PROCESSING_LINES: Record<ProcessingState, string[]> = {
+  idle: [
+    'Ready to peel this into a sticker.',
+    'Tap Peel when this one feels right.',
+  ],
+  'removing-bg': [
+    'Cutting out your sticker...',
+  ],
+  'preparing-frame': [
+    'Building your sticker frame...',
+  ],
+  uploading: [
+    'Saving your sticker...',
+  ],
+  done: [''],
+  error: [''],
+};
 
 function PeelingAnimation({ imageUrl }: { imageUrl: string }) {
   const animValue = useRef(new Animated.Value(0)).current;
@@ -40,13 +146,13 @@ function PeelingAnimation({ imageUrl }: { imageUrl: string }) {
           toValue: 1,
           duration: 800,
           easing: Easing.inOut(Easing.ease),
-          useNativeDriver: false,
+          useNativeDriver: true,
         }),
         Animated.timing(animValue, {
           toValue: 0,
           duration: 800,
           easing: Easing.inOut(Easing.ease),
-          useNativeDriver: false,
+          useNativeDriver: true,
         }),
       ])
     );
@@ -59,19 +165,9 @@ function PeelingAnimation({ imageUrl }: { imageUrl: string }) {
     outputRange: [0, -20],
   });
 
-  const scaleY = animValue.interpolate({
+  const scale = animValue.interpolate({
     inputRange: [0, 1],
-    outputRange: [1, 0.95],
-  });
-
-  const shadowOpacity = animValue.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0.2, 0.5],
-  });
-
-  const shadowRadius = animValue.interpolate({
-    inputRange: [0, 1],
-    outputRange: [8, 20],
+    outputRange: [1, 0.97],
   });
 
   return (
@@ -82,10 +178,8 @@ function PeelingAnimation({ imageUrl }: { imageUrl: string }) {
           {
             transform: [
               { translateY },
-              { scaleY },
+              { scale },
             ],
-            shadowOpacity,
-            shadowRadius,
           },
         ]}
       >
@@ -105,10 +199,19 @@ type DropAnimationProps = {
 };
 
 function DropAnimation({ stickerUrl, onLanded }: DropAnimationProps) {
-  const translateY = useRef(new Animated.Value(-300)).current;
-  const scale = useRef(new Animated.Value(1)).current;
-  const rotate = useRef(new Animated.Value(0)).current;
+  const translateY = useRef(new Animated.Value(28)).current;
+  const scale = useRef(new Animated.Value(0.92)).current;
+  const rotate = useRef(new Animated.Value(-4)).current;
   const textOpacity = useRef(new Animated.Value(0)).current;
+  const haloScale = useRef(new Animated.Value(0.4)).current;
+  const haloOpacity = useRef(new Animated.Value(0)).current;
+  const outlineGlowOpacity = useRef(new Animated.Value(0)).current;
+  const outlineGlowScale = useRef(new Animated.Value(0.96)).current;
+  const auraGlowOpacity = useRef(new Animated.Value(0)).current;
+  const auraGlowScale = useRef(new Animated.Value(0.98)).current;
+  const sparkleValues = useRef(
+    Array.from({ length: 10 }, () => new Animated.Value(0))
+  ).current;
   const [imageLoaded, setImageLoaded] = useState(false);
   const animationStarted = useRef(false);
 
@@ -116,56 +219,141 @@ function DropAnimation({ stickerUrl, onLanded }: DropAnimationProps) {
     if (animationStarted.current) return;
     animationStarted.current = true;
 
-    Animated.spring(translateY, {
-      toValue: 0,
-      damping: 8,
-      stiffness: 80,
-      useNativeDriver: true,
-    }).start(() => {
+    Animated.parallel([
+      Animated.timing(translateY, {
+        toValue: 0,
+        duration: 220,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(scale, {
+        toValue: 1.06,
+        duration: 220,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(rotate, {
+        toValue: 1.5,
+        duration: 220,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      Animated.sequence([
+        Animated.timing(scale, {
+          toValue: 0.96,
+          duration: 90,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.spring(scale, {
+          toValue: 1,
+          damping: 13,
+          stiffness: 360,
+          useNativeDriver: true,
+        }),
+      ]).start(() => onLanded());
+
+      Animated.spring(rotate, {
+        toValue: 0,
+        damping: 12,
+        stiffness: 280,
+        useNativeDriver: true,
+      }).start();
+
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
       Animated.parallel([
-        Animated.spring(scale, {
-          toValue: 1.25,
-          damping: 20,
-          stiffness: 400,
+        Animated.timing(haloOpacity, {
+          toValue: 1,
+          duration: 80,
           useNativeDriver: true,
         }),
-        Animated.spring(rotate, {
-          toValue: 2,
-          damping: 20,
-          stiffness: 400,
-          useNativeDriver: true,
-        }),
-      ]).start(() => {
-        Animated.parallel([
-          Animated.spring(scale, {
-            toValue: 0.95,
-            damping: 20,
-            stiffness: 300,
+        Animated.sequence([
+          Animated.timing(outlineGlowOpacity, {
+            toValue: 0.9,
+            duration: 120,
+            easing: Easing.out(Easing.cubic),
             useNativeDriver: true,
           }),
-          Animated.spring(rotate, {
+          Animated.timing(outlineGlowOpacity, {
+            toValue: 0.36,
+            duration: 420,
+            easing: Easing.out(Easing.quad),
+            useNativeDriver: true,
+          }),
+        ]),
+        Animated.sequence([
+          Animated.timing(outlineGlowScale, {
+            toValue: 1.12,
+            duration: 260,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+          }),
+          Animated.spring(outlineGlowScale, {
+            toValue: 1.04,
+            damping: 14,
+            stiffness: 150,
+            useNativeDriver: true,
+          }),
+        ]),
+        Animated.sequence([
+          Animated.timing(auraGlowOpacity, {
+            toValue: 0.42,
+            duration: 160,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+          }),
+          Animated.timing(auraGlowOpacity, {
             toValue: 0,
-            damping: 20,
-            stiffness: 300,
+            duration: 520,
+            easing: Easing.out(Easing.quad),
             useNativeDriver: true,
           }),
-        ]).start(() => {
-          Animated.spring(scale, {
-            toValue: 1,
-            damping: 15,
-            stiffness: 200,
+        ]),
+        Animated.timing(auraGlowScale, {
+          toValue: 1.26,
+          duration: 680,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.sequence([
+          Animated.timing(haloScale, {
+            toValue: 1.16,
+            duration: 220,
+            easing: Easing.out(Easing.cubic),
             useNativeDriver: true,
-          }).start(() => {
-            onLanded();
-          });
-        });
-      });
+          }),
+          Animated.timing(haloOpacity, {
+            toValue: 0,
+            duration: 160,
+            useNativeDriver: true,
+          }),
+        ]),
+      ]).start();
+
+      Animated.stagger(
+        18,
+        sparkleValues.map((value) =>
+          Animated.sequence([
+            Animated.timing(value, {
+              toValue: 1,
+              duration: 260,
+              easing: Easing.out(Easing.cubic),
+              useNativeDriver: true,
+            }),
+            Animated.timing(value, {
+              toValue: 0,
+              duration: 120,
+              useNativeDriver: true,
+            }),
+          ])
+        )
+      ).start();
 
       Animated.timing(textOpacity, {
         toValue: 1,
-        duration: 600,
+        duration: 260,
         useNativeDriver: true,
       }).start();
     });
@@ -182,29 +370,114 @@ function DropAnimation({ stickerUrl, onLanded }: DropAnimationProps) {
     outputRange: ['-6deg', '0deg', '2deg'],
   });
 
+  const sparkles = [
+    { x: -122, y: -112, size: 20, mark: '✦' },
+    { x: -64, y: -146, size: 14, mark: '✧' },
+    { x: 96, y: -126, size: 22, mark: '✦' },
+    { x: 138, y: -38, size: 14, mark: '✧' },
+    { x: 116, y: 92, size: 18, mark: '✦' },
+    { x: 34, y: 142, size: 14, mark: '✧' },
+    { x: -106, y: 110, size: 20, mark: '✦' },
+    { x: -150, y: 24, size: 13, mark: '✧' },
+    { x: 0, y: -166, size: 12, mark: '✦' },
+    { x: 154, y: 34, size: 12, mark: '✧' },
+  ];
+
   return (
     <View style={styles.dropContainer}>
-      <Animated.View
-        style={[
-          styles.dropStickerWrapper,
-          {
-            transform: [
-              { translateY },
-              { scale },
-              { rotate: rotateInterpolate },
-            ],
-          },
-        ]}
-      >
-        <Image
-          source={{ uri: stickerUrl }}
-          style={styles.dropStickerImage}
-          resizeMode="contain"
-          onLoad={() => setImageLoaded(true)}
+      <View style={styles.dropStage}>
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.dropHalo,
+            {
+              opacity: haloOpacity,
+              transform: [{ scale: haloScale }],
+            },
+          ]}
         />
-      </Animated.View>
+        <Animated.Image
+          source={{ uri: stickerUrl }}
+          style={[
+            styles.dropAuraGlowImage,
+            {
+              opacity: auraGlowOpacity,
+              transform: [{ scale: auraGlowScale }],
+            },
+          ]}
+          resizeMode="contain"
+          blurRadius={24}
+        />
+        <Animated.Image
+          source={{ uri: stickerUrl }}
+          style={[
+            styles.dropOutlineGlowImage,
+            {
+              opacity: outlineGlowOpacity,
+              transform: [{ scale: outlineGlowScale }],
+            },
+          ]}
+          resizeMode="contain"
+          blurRadius={8}
+        />
+        {sparkles.map((sparkle, index) => {
+          const value = sparkleValues[index];
+          const sparkleTranslateX = value.interpolate({
+            inputRange: [0, 1],
+            outputRange: [0, sparkle.x],
+          });
+          const sparkleTranslateY = value.interpolate({
+            inputRange: [0, 1],
+            outputRange: [0, sparkle.y],
+          });
+          const sparkleScale = value.interpolate({
+            inputRange: [0, 0.4, 1],
+            outputRange: [0.2, 1.2, 0.8],
+          });
+
+          return (
+            <Animated.Text
+              key={index}
+              pointerEvents="none"
+              style={[
+                styles.sparkle,
+                {
+                  fontSize: sparkle.size,
+                  opacity: value,
+                  transform: [
+                    { translateX: sparkleTranslateX },
+                    { translateY: sparkleTranslateY },
+                    { scale: sparkleScale },
+                  ],
+                },
+              ]}
+            >
+              {sparkle.mark}
+            </Animated.Text>
+          );
+        })}
+        <Animated.View
+          style={[
+            styles.dropStickerWrapper,
+            {
+              transform: [
+                { translateY },
+                { scale },
+                { rotate: rotateInterpolate },
+              ],
+            },
+          ]}
+        >
+          <Image
+            source={{ uri: stickerUrl }}
+            style={styles.dropStickerImage}
+            resizeMode="contain"
+            onLoad={() => setImageLoaded(true)}
+          />
+        </Animated.View>
+      </View>
       <Animated.Text style={[styles.dropText, { opacity: textOpacity }]}>
-        This one satisfies you.
+        Freshly peeled. Ready for a page.
       </Animated.Text>
     </View>
   );
@@ -212,17 +485,167 @@ function DropAnimation({ stickerUrl, onLanded }: DropAnimationProps) {
 
 const randomBetween = (min: number, max: number) => Math.random() * (max - min) + min;
 
+function getStarPath(size: number, outerRadius: number, innerRadius: number): string {
+  const center = size / 2;
+  const points: string[] = [];
+
+  for (let index = 0; index < 10; index += 1) {
+    const angle = -Math.PI / 2 + (index * Math.PI) / 5;
+    const radius = index % 2 === 0 ? outerRadius : innerRadius;
+    const x = center + Math.cos(angle) * radius;
+    const y = center + Math.sin(angle) * radius;
+    points.push(`${index === 0 ? 'M' : 'L'}${x.toFixed(1)} ${y.toFixed(1)}`);
+  }
+
+  return `${points.join(' ')} Z`;
+}
+
+function getHeartPath(size: number): string {
+  return [
+    `M ${size / 2} ${size * 0.91}`,
+    `C ${size * 0.14} ${size * 0.68}, ${size * 0.04} ${size * 0.43}, ${size * 0.16} ${size * 0.24}`,
+    `C ${size * 0.28} ${size * 0.04}, ${size * 0.43} ${size * 0.12}, ${size / 2} ${size * 0.27}`,
+    `C ${size * 0.57} ${size * 0.12}, ${size * 0.72} ${size * 0.04}, ${size * 0.84} ${size * 0.24}`,
+    `C ${size * 0.96} ${size * 0.43}, ${size * 0.86} ${size * 0.68}, ${size / 2} ${size * 0.91}`,
+    'Z',
+  ].join(' ');
+}
+
+type FramedStickerCanvasProps = {
+  imageUrl: string;
+  mode: Exclude<StickerFrameMode, 'cutout'>;
+  frameColor: string;
+  displayWidth: number;
+  displayHeight: number;
+  onImageLoad?: () => void;
+};
+
+const FramedStickerCanvas = React.forwardRef<View, FramedStickerCanvasProps>(
+  ({ imageUrl, mode, frameColor, displayWidth, displayHeight, onImageLoad }, ref) => {
+    const isRounded = mode === 'rounded';
+    const width = isRounded ? FRAMED_STICKER_ROUNDED_WIDTH : FRAMED_STICKER_SQUARE_SIZE;
+    const height = isRounded ? FRAMED_STICKER_ROUNDED_HEIGHT : FRAMED_STICKER_SQUARE_SIZE;
+    const strokeWidth = isRounded ? 16 : 19;
+    const roundedRadius = 132;
+    const starPath = getStarPath(FRAMED_STICKER_SQUARE_SIZE, 490, 245);
+    const heartPath = getHeartPath(FRAMED_STICKER_SQUARE_SIZE);
+
+    return (
+      <View
+        ref={ref}
+        collapsable={false}
+        style={[
+          styles.frameCanvas,
+          {
+            width: displayWidth,
+            height: displayHeight,
+          },
+        ]}
+      >
+        <Svg width="100%" height="100%" viewBox={`0 0 ${width} ${height}`}>
+          <Defs>
+            {isRounded ? (
+              <ClipPath id="frameClip">
+                <Rect
+                  x={strokeWidth / 2}
+                  y={strokeWidth / 2}
+                  width={width - strokeWidth}
+                  height={height - strokeWidth}
+                  rx={roundedRadius}
+                  ry={roundedRadius}
+                />
+              </ClipPath>
+            ) : (
+              <ClipPath id="frameClip">
+                <Path d={mode === 'heart' ? heartPath : starPath} />
+              </ClipPath>
+            )}
+          </Defs>
+          <SvgImage
+            href={{ uri: imageUrl }}
+            x="0"
+            y="0"
+            width={width}
+            height={height}
+            preserveAspectRatio="xMidYMid slice"
+            clipPath="url(#frameClip)"
+            onLoad={onImageLoad}
+          />
+          {isRounded ? (
+            <Rect
+              x={strokeWidth / 2}
+              y={strokeWidth / 2}
+              width={width - strokeWidth}
+              height={height - strokeWidth}
+              rx={roundedRadius}
+              ry={roundedRadius}
+              fill="none"
+              stroke={frameColor}
+              strokeWidth={strokeWidth}
+            />
+          ) : (
+            <Path
+              d={mode === 'heart' ? heartPath : starPath}
+              fill="none"
+              stroke={frameColor}
+              strokeWidth={strokeWidth}
+              strokeLinejoin="round"
+            />
+          )}
+        </Svg>
+      </View>
+    );
+  }
+);
+
+FramedStickerCanvas.displayName = 'FramedStickerCanvas';
+
+async function prepareStickerFileForUpload(
+  result: BackgroundRemovalPreviewResult
+): Promise<string> {
+  const sourceUri = result.nativeResult?.uri;
+  if (!sourceUri || !result.nativeResult?.width || !result.nativeResult?.height) {
+    throw new Error('Sticker file is not ready.');
+  }
+
+  const longestEdge = Math.max(result.nativeResult.width, result.nativeResult.height);
+  if (longestEdge <= STICKER_UPLOAD_MAX_EDGE) {
+    return sourceUri;
+  }
+
+  const resized = await ImageManipulator.manipulateAsync(
+    sourceUri,
+    [
+      {
+        resize: result.nativeResult.width >= result.nativeResult.height
+          ? { width: STICKER_UPLOAD_MAX_EDGE }
+          : { height: STICKER_UPLOAD_MAX_EDGE },
+      },
+    ],
+    {
+      compress: 1,
+      format: ImageManipulator.SaveFormat.PNG,
+    }
+  );
+
+  return resized.uri;
+}
+
 export default function CropScreen() {
-  const { photoPath, bookId, pageIndex } = useLocalSearchParams<{
-    photoPath: string;
+  const { photoUri, captureId, bookId, pageIndex, frameMode, frameColor } = useLocalSearchParams<{
+    photoUri?: string;
+    captureId?: string;
     bookId?: string;
     pageIndex?: string;
+    frameMode?: string;
+    frameColor?: string;
   }>();
   const router = useRouter();
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
 
   const [processingState, setProcessingState] = useState<ProcessingState>('idle');
+  const [statusLineIndex, setStatusLineIndex] = useState(0);
   const [stickerUrl, setStickerUrl] = useState<string | null>(null);
   const [sticker, setSticker] = useState<Sticker | null>(null);
   const [animationComplete, setAnimationComplete] = useState(false);
@@ -234,8 +657,108 @@ export default function CropScreen() {
   const [showNewBookInput, setShowNewBookInput] = useState(false);
   const [newBookName, setNewBookName] = useState('');
   const [savingToBook, setSavingToBook] = useState(false);
+  const backgroundRemovalPromiseRef = useRef<Promise<BackgroundRemovalPreviewResult> | null>(null);
+  const backgroundRemovalImageRef = useRef<string | null>(null);
+  const framedStickerRef = useRef<View>(null);
+  const [framePreviewReady, setFramePreviewReady] = useState(false);
+  const [processingElapsedSeconds, setProcessingElapsedSeconds] = useState(0);
+  const processingStartedAtRef = useRef<number | null>(null);
+  const processingRequestRef = useRef(false);
 
-  const imageUrl = photoPath ? getPhotoUrl(photoPath) : null;
+  const imageUrl = photoUri ?? null;
+  const stickerFrameMode = normalizeStickerFrameMode(frameMode);
+  const stickerFrameColor = normalizeStickerFrameColor(frameColor);
+  const isFramedSticker = stickerFrameMode !== 'cutout';
+  const framedPreviewWidth = isFramedSticker && stickerFrameMode === 'rounded'
+    ? FRAMED_PREVIEW_MAX_WIDTH
+    : FRAMED_PREVIEW_MAX_WIDTH;
+  const framedPreviewHeight = isFramedSticker && stickerFrameMode === 'rounded'
+    ? Math.round(FRAMED_PREVIEW_MAX_WIDTH * 0.75)
+    : FRAMED_PREVIEW_MAX_WIDTH;
+  const framedCaptureWidth = stickerFrameMode === 'rounded'
+    ? FRAMED_STICKER_ROUNDED_WIDTH
+    : FRAMED_STICKER_SQUARE_SIZE;
+  const framedCaptureHeight = stickerFrameMode === 'rounded'
+    ? FRAMED_STICKER_ROUNDED_HEIGHT
+    : FRAMED_STICKER_SQUARE_SIZE;
+
+  useEffect(() => {
+    setProcessingState('idle');
+    setStatusLineIndex(0);
+    setStickerUrl(null);
+    setSticker(null);
+    setAnimationComplete(false);
+    setErrorMessage(null);
+    setShowBookSelector(false);
+    setShowNewBookInput(false);
+    setNewBookName('');
+    setSavingToBook(false);
+    setProcessingElapsedSeconds(0);
+    processingStartedAtRef.current = null;
+    processingRequestRef.current = false;
+    backgroundRemovalPromiseRef.current = null;
+    backgroundRemovalImageRef.current = null;
+    setFramePreviewReady(false);
+  }, [photoUri, captureId, frameMode, frameColor]);
+
+  useEffect(() => {
+    if (!imageUrl || processingState !== 'idle' || isFramedSticker) return;
+    if (backgroundRemovalImageRef.current === imageUrl && backgroundRemovalPromiseRef.current) return;
+
+    backgroundRemovalImageRef.current = imageUrl;
+    backgroundRemovalPromiseRef.current = removeBackground(imageUrl);
+  }, [imageUrl, isFramedSticker, processingState]);
+
+  useEffect(() => {
+    if (!imageUrl || !isFramedSticker || processingState !== 'idle') return;
+
+    const fallback = setTimeout(() => {
+      setFramePreviewReady(true);
+    }, 700);
+
+    return () => clearTimeout(fallback);
+  }, [imageUrl, isFramedSticker, processingState, stickerFrameColor, stickerFrameMode]);
+
+  useEffect(() => {
+    setStatusLineIndex(0);
+    const lines = PROCESSING_LINES[processingState];
+    if (lines.length <= 1) return;
+
+    const interval = setInterval(() => {
+      setStatusLineIndex((prev) => (prev + 1) % lines.length);
+    }, processingState === 'idle' ? 2400 : 1500);
+
+    return () => clearInterval(interval);
+  }, [processingState]);
+
+  useEffect(() => {
+    const active =
+      processingState === 'preparing-frame' ||
+      processingState === 'removing-bg' ||
+      processingState === 'uploading';
+
+    if (!active) {
+      processingStartedAtRef.current = null;
+      setProcessingElapsedSeconds(0);
+      return;
+    }
+
+    if (processingStartedAtRef.current === null) {
+      processingStartedAtRef.current = Date.now();
+    }
+
+    const updateElapsed = () => {
+      if (processingStartedAtRef.current !== null) {
+        setProcessingElapsedSeconds(
+          Math.floor((Date.now() - processingStartedAtRef.current) / 1000)
+        );
+      }
+    };
+
+    updateElapsed();
+    const interval = setInterval(updateElapsed, 1000);
+    return () => clearInterval(interval);
+  }, [processingState]);
 
   const fetchBooks = async () => {
     setLoadingBooks(true);
@@ -244,34 +767,151 @@ export default function CropScreen() {
     setLoadingBooks(false);
   };
 
+  const captureFramedSticker = async (
+    timings: ProcessingTimings
+  ): Promise<FramedStickerCapture> => {
+    if (!framedStickerRef.current) {
+      throw new Error('Frame preview is not ready yet.');
+    }
+
+    const uri = await measureAsyncStep(timings, 'frame_capture_ms', () =>
+      captureRef(framedStickerRef, {
+        format: 'png',
+        quality: 1,
+        result: 'tmpfile',
+        width: framedCaptureWidth,
+        height: framedCaptureHeight,
+      })
+    );
+
+    return {
+      uri,
+      width: framedCaptureWidth,
+      height: framedCaptureHeight,
+    };
+  };
+
   const processImage = async () => {
-    if (!imageUrl || !user || !photoPath) {
+    if (processingRequestRef.current) return;
+
+    if (!imageUrl || !user) {
       setErrorMessage('Image information is missing.');
       setProcessingState('error');
       return;
     }
 
-    setProcessingState('removing-bg');
+    processingRequestRef.current = true;
+    const totalStartedAt = Date.now();
+    const timings: ProcessingTimings = {};
+
+    setProcessingState(isFramedSticker ? 'preparing-frame' : 'removing-bg');
     setErrorMessage(null);
 
     try {
-      const { base64, error: bgError } = await removeBackground(imageUrl);
+      await waitForProcessingScreen();
+      timings.processing_ui_ready_ms = Date.now() - totalStartedAt;
 
-      if (bgError || !base64) {
-        throw new Error(bgError?.message || 'Failed to remove background');
+      const { status: accountStatus, error: quotaError } = await measureAsyncStep(
+        timings,
+        'account_status_ms',
+        () => getEffectiveAccountStatus(user.id)
+      );
+      if (quotaError) {
+        throw new Error('Could not check your monthly sticker limit.');
       }
 
-      setProcessingState('uploading');
+      if (accountStatus.stickers_remaining <= 0) {
+        throw new Error(
+          accountStatus.plan === 'paid'
+            ? 'You have used all 100 stickers for this month.'
+            : 'You have used all 5 free stickers for this month. Upgrade to Peelzy Plus for 100 stickers per month.'
+        );
+      }
+
+      let uploadUri: string;
+      let previewUriForThumbnail: string | null = null;
+      let previewDimensions: { width?: number; height?: number } | undefined;
+      let provider: BackgroundRemovalProvider | 'frame' = 'frame';
+      let nativeResult: BackgroundRemovalPreviewResult['nativeResult'] | undefined;
+
+      if (isFramedSticker) {
+        const framedResult = await captureFramedSticker(timings);
+        setProcessingState('uploading');
+        uploadUri = framedResult.uri;
+        previewUriForThumbnail = framedResult.uri;
+        previewDimensions = {
+          width: framedResult.width,
+          height: framedResult.height,
+        };
+      } else {
+        const backgroundRemovalPromise =
+          backgroundRemovalImageRef.current === imageUrl && backgroundRemovalPromiseRef.current
+            ? backgroundRemovalPromiseRef.current
+            : removeBackground(imageUrl);
+
+        const {
+          error: bgError,
+          provider: removalProvider,
+          nativeResult: removalNativeResult,
+        } = await measureAsyncStep(
+          timings,
+          'background_removal_wait_ms',
+          () => backgroundRemovalPromise
+        );
+
+        if (bgError || !removalNativeResult?.uri) {
+          throw new Error(bgError?.message || 'Failed to remove background');
+        }
+
+        setProcessingState('uploading');
+        provider = removalProvider;
+        nativeResult = removalNativeResult;
+        if (removalNativeResult?.elapsedMs !== undefined) {
+          timings.background_removal_native_ms = removalNativeResult.elapsedMs;
+        }
+
+        uploadUri = await measureAsyncStep(
+          timings,
+          'prepare_upload_ms',
+          () => prepareStickerFileForUpload({
+            error: null,
+            provider: removalProvider,
+            nativeResult: removalNativeResult,
+          })
+        );
+        previewUriForThumbnail = removalNativeResult?.uri ?? null;
+        previewDimensions = {
+          width: removalNativeResult?.width,
+          height: removalNativeResult?.height,
+        };
+      }
 
       const metadata = {
         capturedAt: new Date().toISOString(),
-        originalPhotoPath: photoPath,
+        sourceCanvas: photoUri ? 'square' as const : 'unknown' as const,
+        backgroundRemovalProvider: provider === 'frame' ? undefined : provider,
+        backgroundRemovalElapsedMs: nativeResult?.elapsedMs,
+        subjectCount: nativeResult?.subjectCount,
+        frameMode: stickerFrameMode,
+        frameColor: isFramedSticker ? stickerFrameColor : undefined,
+        displayScale: 0.9,
+        hitBounds: isFramedSticker
+          ? { x: 0, y: 0, width: 1, height: 1 }
+          : getNormalizedContentBounds(nativeResult),
+        alphaMask: isFramedSticker
+          ? createFrameAlphaMask(stickerFrameMode as Exclude<StickerFrameMode, 'cutout'>)
+          : createNativeAlphaMask(nativeResult?.alphaMask),
+        minDisplayScaleApplied: false,
       };
 
-      const { sticker: newSticker, error: uploadError } = await uploadSticker(
-        base64,
-        user.id,
-        metadata
+      const { sticker: newSticker, error: uploadError } = await measureAsyncStep(
+        timings,
+        'sticker_upload_ms',
+        () => uploadSticker(
+          uploadUri,
+          user.id,
+          metadata
+        )
       );
 
       if (uploadError || !newSticker) {
@@ -280,39 +920,94 @@ export default function CropScreen() {
 
       // If bookId and pageIndex were passed, place sticker directly on the page
       if (bookId && pageIndex !== undefined) {
+        const targetPageIndex = parseInt(pageIndex, 10);
         const pos_x = randomBetween(0.2, 0.8);
         const pos_y = randomBetween(0.2, 0.8);
         const rotation = randomBetween(-15, 15);
 
-        await supabase
-          .from('stickers')
-          .update({
-            book_id: bookId,
-            page_index: parseInt(pageIndex, 10),
+        const { error: placeError } = await measureAsyncStep(
+          timings,
+          'place_in_book_ms',
+          () => placeStickerInBook(
+            newSticker.id,
+            bookId,
+            targetPageIndex,
             pos_x,
             pos_y,
-            rotation,
-          })
-          .eq('id', newSticker.id);
+            rotation
+          )
+        );
+
+        if (placeError) {
+          throw new Error(placeError.message || 'Failed to place sticker on this page');
+        }
+
+        newSticker.book_id = bookId;
+        newSticker.page_index = targetPageIndex;
+        newSticker.pos_x = pos_x;
+        newSticker.pos_y = pos_y;
+        newSticker.rotation = rotation;
       } else if (bookId) {
-        // If only bookId was passed (legacy flow), assign to book without page
-        await supabase
-          .from('stickers')
-          .update({ book_id: bookId })
-          .eq('id', newSticker.id);
+        // If only bookId was passed (legacy flow), place it on the first page.
+        await measureAsyncStep(
+          timings,
+          'place_in_book_ms',
+          () => placeStickerInBook(
+            newSticker.id,
+            bookId,
+            0,
+            randomBetween(0.2, 0.8),
+            randomBetween(0.2, 0.8),
+            randomBetween(-15, 15)
+          )
+        );
       }
 
       setSticker(newSticker);
       setStickerUrl(newSticker.image_url);
       setProcessingState('done');
+      logProcessingTimings(stickerFrameMode, 'success', timings, totalStartedAt);
+
+      if (previewUriForThumbnail) {
+        createStickerThumbnail(newSticker.id, user.id, previewUriForThumbnail, {
+          width: previewDimensions?.width,
+          height: previewDimensions?.height,
+        }).then(({ thumbnailUrl, error }) => {
+          if (error) {
+            console.warn('Failed to create sticker thumbnail:', error);
+            return;
+          }
+          if (thumbnailUrl) {
+            setSticker((current) =>
+              current?.id === newSticker.id
+                ? { ...current, thumbnail_url: thumbnailUrl }
+                : current
+            );
+          }
+        });
+      }
     } catch (error) {
+      logProcessingTimings(stickerFrameMode, 'error', timings, totalStartedAt);
       setProcessingState('error');
       setErrorMessage(
         error instanceof Error
           ? error.message
           : 'Something went wrong peeling this one.'
       );
+    } finally {
+      processingRequestRef.current = false;
     }
+  };
+
+  const handleRetry = () => {
+    if (isFramedSticker) {
+      setProcessingState('idle');
+      setErrorMessage(null);
+      setFramePreviewReady(false);
+      return;
+    }
+
+    processImage();
   };
 
   const handleAnimationLanded = () => {
@@ -324,10 +1019,14 @@ export default function CropScreen() {
     if (!sticker) return;
 
     setSavingToBook(true);
-    const { error } = await supabase
-      .from('stickers')
-      .update({ book_id: selectedBookId })
-      .eq('id', sticker.id);
+    const { error } = await placeStickerInBook(
+      sticker.id,
+      selectedBookId,
+      0,
+      randomBetween(0.2, 0.8),
+      randomBetween(0.2, 0.8),
+      randomBetween(-15, 15)
+    );
 
     setSavingToBook(false);
 
@@ -353,10 +1052,14 @@ export default function CropScreen() {
       return;
     }
 
-    const { error: updateError } = await supabase
-      .from('stickers')
-      .update({ book_id: newBook.id })
-      .eq('id', sticker.id);
+    const { error: updateError } = await placeStickerInBook(
+      sticker.id,
+      newBook.id,
+      0,
+      randomBetween(0.2, 0.8),
+      randomBetween(0.2, 0.8),
+      randomBetween(-15, 15)
+    );
 
     setSavingToBook(false);
 
@@ -380,7 +1083,15 @@ export default function CropScreen() {
   const handleComplete = () => {
     // If bookId and pageIndex were passed, go to book-detail
     if (bookId && pageIndex !== undefined) {
-      router.replace(`/(app)/book-detail?bookId=${bookId}`);
+      router.replace({
+        pathname: '/(app)/book-detail',
+        params: {
+          bookId,
+          pageIndex,
+          placedStickerId: sticker?.id,
+          refresh: String(Date.now()),
+        },
+      });
       return;
     }
     // If only bookId was passed, go to collection
@@ -396,60 +1107,87 @@ export default function CropScreen() {
     }
   };
 
-  const getStatusText = () => {
-    switch (processingState) {
-      case 'removing-bg':
-        return 'detecting edges...';
-      case 'uploading':
-        return 'saving sticker...';
-      case 'done':
-        return '';
-      case 'error':
-        return '';
-      default:
-        return 'Tap "Peel" to remove the background';
-    }
+  const handleBackToSnap = () => {
+    router.replace({
+      pathname: '/(app)/snap',
+      params: {
+        ...(bookId && { bookId }),
+        ...(pageIndex !== undefined && { pageIndex }),
+      },
+    });
   };
 
-  const isProcessing = processingState === 'removing-bg' || processingState === 'uploading';
+  const handlePeelAnother = () => {
+    router.replace({
+      pathname: '/(app)/snap',
+      params: {
+        ...(bookId && { bookId }),
+        ...(pageIndex !== undefined && { pageIndex }),
+      },
+    });
+  };
+
+  const getStatusText = () => {
+    const lines = PROCESSING_LINES[processingState];
+    return lines[statusLineIndex % lines.length] || '';
+  };
+
+  const isProcessing =
+    processingState === 'preparing-frame' ||
+    processingState === 'removing-bg' ||
+    processingState === 'uploading';
 
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} disabled={isProcessing}>
-          <Text style={[styles.headerButton, isProcessing && styles.headerButtonDisabled]}>
-            ←
-          </Text>
-        </TouchableOpacity>
         <Text style={styles.headerTitle}>Peel</Text>
-        <TouchableOpacity
-          onPress={handleComplete}
-          disabled={isProcessing || processingState !== 'done'}
-        >
-          <Text style={[
-            styles.headerButton,
-            (isProcessing || processingState !== 'done') && styles.headerButtonDisabled
-          ]}>
-            Done
-          </Text>
-        </TouchableOpacity>
       </View>
 
       <View style={styles.contentContainer}>
-        {processingState === 'idle' && imageUrl && (
+        {(processingState === 'idle' || (processingState === 'preparing-frame' && isFramedSticker)) && imageUrl && (
           <View style={styles.imageContainer}>
-            <Image
-              source={{ uri: imageUrl }}
-              style={styles.image}
-              resizeMode="contain"
-            />
+            {isFramedSticker ? (
+              <View style={styles.framePreviewStage}>
+                <FramedStickerCanvas
+                  ref={framedStickerRef}
+                  imageUrl={imageUrl}
+                  mode={stickerFrameMode}
+                  frameColor={stickerFrameColor}
+                  displayWidth={framedPreviewWidth}
+                  displayHeight={framedPreviewHeight}
+                  onImageLoad={() => setFramePreviewReady(true)}
+                />
+                <Text style={styles.framePreviewLabel}>
+                  {stickerFrameMode === 'rounded' ? 'Rounded frame' : stickerFrameMode === 'heart' ? 'Heart frame' : 'Star frame'}
+                </Text>
+              </View>
+            ) : (
+              <Image
+                source={{ uri: imageUrl }}
+                style={styles.image}
+                resizeMode="contain"
+              />
+            )}
           </View>
         )}
 
-        {(processingState === 'removing-bg' || processingState === 'uploading') && imageUrl && (
+        {isProcessing && imageUrl && (
           <View style={styles.processingContainer}>
             <PeelingAnimation imageUrl={imageUrl} />
-            <Text style={styles.processingText}>{getStatusText()}</Text>
+            <View style={styles.processingStatusCard}>
+              <View style={styles.processingStatusRow}>
+                <ActivityIndicator size="small" color="#A78BFA" />
+                <Text style={styles.processingText}>{getStatusText()}</Text>
+              </View>
+              <Text style={styles.processingElapsedText}>
+                {processingElapsedSeconds}s
+              </Text>
+              {processingElapsedSeconds >= 15 && (
+                <Text style={styles.processingLongText}>
+                  Still working. Keep Peelzy open.
+                </Text>
+              )}
+            </View>
           </View>
         )}
 
@@ -470,28 +1208,46 @@ export default function CropScreen() {
       </View>
 
       <View style={[styles.actions, { paddingBottom: TAB_BAR_HEIGHT + insets.bottom + 24 }]}>
-        {processingState !== 'done' && processingState !== 'removing-bg' && processingState !== 'uploading' && processingState !== 'error' && (
+        {processingState !== 'done' && !isProcessing && processingState !== 'error' && (
           <Text style={styles.statusText}>{getStatusText()}</Text>
         )}
 
         {processingState === 'idle' && (
-          <TouchableOpacity style={styles.processButton} onPress={processImage}>
-            <Text style={styles.processButtonText}>✂️ Peel</Text>
-          </TouchableOpacity>
+          <View style={styles.peelActionRow}>
+            <TouchableOpacity
+              onPress={handleBackToSnap}
+              disabled={isProcessing}
+              style={styles.peelBackButton}
+            >
+              <Text style={[styles.peelBackButtonText, isProcessing && styles.headerButtonDisabled]}>
+                ‹ Back
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.processButton, isFramedSticker && !framePreviewReady && styles.processButtonDisabled]}
+              onPress={processImage}
+              disabled={isFramedSticker && !framePreviewReady}
+            >
+              <Text style={styles.processButtonText}>✂️ Peel</Text>
+            </TouchableOpacity>
+          </View>
         )}
 
         {processingState === 'error' && (
-          <TouchableOpacity style={styles.retryButton} onPress={processImage}>
+          <TouchableOpacity style={styles.retryButton} onPress={handleRetry}>
             <Text style={styles.retryButtonText}>Try again</Text>
           </TouchableOpacity>
         )}
 
         {processingState === 'done' && animationComplete && (
-          <TouchableOpacity style={styles.doneButton} onPress={handleComplete}>
-            <Text style={styles.doneButtonText}>
-              {books.length > 0 ? 'Add to Book' : 'Done'}
-            </Text>
-          </TouchableOpacity>
+          <View style={styles.doneActionsRow}>
+            <TouchableOpacity style={[styles.doneButton, styles.addToBookButton]} onPress={handleComplete}>
+              <Text style={styles.doneButtonText}>Add to Book</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.doneButton, styles.peelAnotherButton]} onPress={handlePeelAnother}>
+              <Text style={styles.peelAnotherButtonText}>Peel another</Text>
+            </TouchableOpacity>
+          </View>
         )}
       </View>
 
@@ -611,8 +1367,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#000',
   },
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 16,
     paddingTop: 60,
@@ -622,11 +1376,6 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
     color: '#fff',
-  },
-  headerButton: {
-    fontSize: 16,
-    color: '#A78BFA',
-    fontWeight: '600',
   },
   headerButtonDisabled: {
     opacity: 0.4,
@@ -648,12 +1397,29 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
   },
+  framePreviewStage: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 18,
+  },
+  frameCanvas: {
+    backgroundColor: 'transparent',
+  },
+  framePreviewLabel: {
+    color: 'rgba(255, 255, 255, 0.62)',
+    fontSize: 14,
+    fontWeight: '800',
+  },
   processingContainer: {
+    ...StyleSheet.absoluteFillObject,
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     width: '100%',
     overflow: 'visible',
+    paddingHorizontal: 24,
+    backgroundColor: '#111',
+    zIndex: 10,
   },
   peelingContainer: {
     width: STICKER_MAX_WIDTH,
@@ -680,10 +1446,38 @@ const styles = StyleSheet.create({
     borderRadius: 16,
   },
   processingText: {
-    marginTop: 24,
     fontSize: 16,
-    color: '#666',
-    fontStyle: 'italic',
+    color: '#fff',
+    fontWeight: '800',
+  },
+  processingStatusCard: {
+    minWidth: 250,
+    marginTop: 14,
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    borderRadius: 8,
+    backgroundColor: '#1b1b1b',
+    borderWidth: 1,
+    borderColor: 'rgba(167, 139, 250, 0.45)',
+    alignItems: 'center',
+    gap: 7,
+  },
+  processingStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+  },
+  processingElapsedText: {
+    color: 'rgba(255, 255, 255, 0.55)',
+    fontSize: 13,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
+  },
+  processingLongText: {
+    color: 'rgba(255, 255, 255, 0.72)',
+    fontSize: 12,
+    textAlign: 'center',
   },
   dropContainer: {
     flex: 1,
@@ -691,6 +1485,39 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     width: '100%',
     paddingHorizontal: 32,
+  },
+  dropStage: {
+    width: STICKER_MAX_WIDTH + 120,
+    height: STICKER_MAX_WIDTH + 120,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  dropHalo: {
+    position: 'absolute',
+    width: STICKER_MAX_WIDTH,
+    height: STICKER_MAX_WIDTH,
+    borderRadius: STICKER_MAX_WIDTH / 2,
+    backgroundColor: 'rgba(167, 139, 250, 0.24)',
+    borderWidth: 2,
+    borderColor: 'rgba(255, 255, 255, 0.36)',
+  },
+  dropAuraGlowImage: {
+    position: 'absolute',
+    width: STICKER_MAX_WIDTH,
+    height: STICKER_MAX_WIDTH,
+  },
+  dropOutlineGlowImage: {
+    position: 'absolute',
+    width: STICKER_MAX_WIDTH,
+    height: STICKER_MAX_WIDTH,
+  },
+  sparkle: {
+    position: 'absolute',
+    color: '#F7D675',
+    fontWeight: '900',
+    textShadowColor: 'rgba(255, 255, 255, 0.7)',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 8,
   },
   dropStickerWrapper: {
     width: STICKER_MAX_WIDTH,
@@ -749,6 +1576,27 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     borderRadius: 28,
   },
+  peelActionRow: {
+    width: '100%',
+    minHeight: 56,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  peelBackButton: {
+    position: 'absolute',
+    left: 8,
+    minHeight: 48,
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+  },
+  peelBackButtonText: {
+    fontSize: 16,
+    color: '#A78BFA',
+    fontWeight: '800',
+  },
+  processButtonDisabled: {
+    opacity: 0.45,
+  },
   processButtonText: {
     color: '#000',
     fontSize: 18,
@@ -767,14 +1615,36 @@ const styles = StyleSheet.create({
   },
   doneButton: {
     backgroundColor: '#A78BFA',
-    paddingHorizontal: 40,
+    paddingHorizontal: 24,
     paddingVertical: 16,
     borderRadius: 28,
+    minWidth: 142,
+    alignItems: 'center',
+  },
+  doneActionsRow: {
+    width: '100%',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 12,
+  },
+  addToBookButton: {
+    flex: 1,
+    maxWidth: 180,
+  },
+  peelAnotherButton: {
+    flex: 1,
+    maxWidth: 180,
+    backgroundColor: '#FFFFFF',
   },
   doneButtonText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  peelAnotherButtonText: {
+    color: '#111111',
+    fontSize: 16,
+    fontWeight: '700',
   },
   modalOverlay: {
     flex: 1,

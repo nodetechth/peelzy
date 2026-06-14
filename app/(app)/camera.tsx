@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -6,18 +6,41 @@ import {
   StyleSheet,
   Alert,
   ActivityIndicator,
+  AppState,
+  Linking,
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useRouter } from 'expo-router';
-import { uploadPhoto } from '../../lib/storage';
-import { useAuth } from '../../contexts/AuthContext';
 
 export default function CameraScreen() {
-  const [permission, requestPermission] = useCameraPermissions();
+  const [permission, requestPermission, getPermission] = useCameraPermissions();
   const [isCapturing, setIsCapturing] = useState(false);
   const cameraRef = useRef<CameraView>(null);
   const router = useRouter();
-  const { user } = useAuth();
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        getPermission();
+      }
+    });
+
+    return () => subscription.remove();
+  }, [getPermission]);
+
+  const handleRequestPermission = async () => {
+    const nextPermission = await requestPermission();
+    if (!nextPermission.granted && !nextPermission.canAskAgain) {
+      Alert.alert(
+        'Camera access is off',
+        'Open Settings and allow Peelzy to use the camera.',
+        [
+          { text: 'Not now', style: 'cancel' },
+          { text: 'Open Settings', onPress: () => Linking.openSettings() },
+        ]
+      );
+    }
+  };
 
   if (!permission) {
     return (
@@ -30,28 +53,33 @@ export default function CameraScreen() {
   if (!permission.granted) {
     return (
       <View style={styles.permissionContainer}>
-        <Text style={styles.permissionTitle}>カメラへのアクセスが必要です</Text>
+        <Text style={styles.permissionTitle}>Camera access needed</Text>
         <Text style={styles.permissionText}>
-          写真を撮影するには、カメラへのアクセスを許可してください。
+          Peelzy needs the camera to turn this moment into a sticker.
         </Text>
         {permission.canAskAgain ? (
-          <TouchableOpacity style={styles.permissionButton} onPress={requestPermission}>
-            <Text style={styles.permissionButtonText}>アクセスを許可</Text>
+          <TouchableOpacity style={styles.permissionButton} onPress={handleRequestPermission}>
+            <Text style={styles.permissionButtonText}>Allow camera</Text>
           </TouchableOpacity>
         ) : (
-          <Text style={styles.permissionDeniedText}>
-            設定アプリからカメラへのアクセスを許可してください。
-          </Text>
+          <>
+            <Text style={styles.permissionDeniedText}>
+              Camera access is off. Open Settings, allow Peelzy to use the camera, then come back here.
+            </Text>
+            <TouchableOpacity style={styles.settingsButton} onPress={() => Linking.openSettings()}>
+              <Text style={styles.settingsButtonText}>Open Settings</Text>
+            </TouchableOpacity>
+          </>
         )}
         <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-          <Text style={styles.backButtonText}>戻る</Text>
+          <Text style={styles.backButtonText}>Back</Text>
         </TouchableOpacity>
       </View>
     );
   }
 
   const handleCapture = async () => {
-    if (!cameraRef.current || isCapturing || !user) return;
+    if (!cameraRef.current || isCapturing) return;
 
     setIsCapturing(true);
     try {
@@ -61,25 +89,20 @@ export default function CameraScreen() {
       });
 
       if (!photo?.uri) {
-        Alert.alert('エラー', '写真の撮影に失敗しました');
-        setIsCapturing(false);
-        return;
-      }
-
-      const { path, error } = await uploadPhoto(photo.uri, user.id);
-
-      if (error) {
-        Alert.alert('アップロードエラー', error.message);
+        Alert.alert('Oops, let\'s try that again', 'The photo could not be captured.');
         setIsCapturing(false);
         return;
       }
 
       router.push({
         pathname: '/(app)/crop',
-        params: { photoPath: path },
+        params: {
+          photoUri: photo.uri,
+          captureId: `${Date.now()}`,
+        },
       });
     } catch (error) {
-      Alert.alert('エラー', '予期しないエラーが発生しました');
+      Alert.alert('Oops, let\'s try that again', 'Something went wrong.');
     } finally {
       setIsCapturing(false);
     }
@@ -201,6 +224,19 @@ const styles = StyleSheet.create({
     color: '#f44',
     textAlign: 'center',
     marginTop: 8,
+  },
+  settingsButton: {
+    marginTop: 18,
+    borderWidth: 1,
+    borderColor: '#222',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 24,
+  },
+  settingsButtonText: {
+    color: '#111',
+    fontSize: 15,
+    fontWeight: '800',
   },
   backButton: {
     marginTop: 24,

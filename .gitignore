@@ -9,8 +9,14 @@ dist/
 web-build/
 expo-env.d.ts
 
+# Local experiments
+/mobilesam-model/
+/pocs/
+/supabase/.temp/
+
 # Native
 .kotlin/
+**/android/build/
 *.orig.*
 *.jks
 *.p8
@@ -29,6 +35,9 @@ yarn-error.*
 # macOS
 .DS_Store
 *.pem
+
+# Duplicate local asset copies
+/assets/* 2.png
 
 # local env files
 .env
