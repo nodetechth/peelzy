@@ -133,6 +133,7 @@ const styles = StyleSheet.create({
   },
   title: {
     flex: 1,
+    fontFamily: appTheme.fonts.black,
     fontSize: 30,
     fontWeight: '900',
     color: appTheme.colors.text,

@@ -187,7 +187,7 @@ export default function HomeScreen() {
   const openCreateBookSettings = useCallback(() => {
     setBookSettingsMode('create');
     setBookSettingsTarget(null);
-    setBookFormName(`シール帳 ${books.length + 1}`);
+    setBookFormName(`New Book ${books.length + 1}`);
     setBookFormTheme(DEFAULT_COVER_THEME);
     setBookFormAccent(DEFAULT_ACCENT_COLOR);
     setBookFormPageColor(DEFAULT_ACCENT_COLOR);
@@ -751,6 +751,7 @@ const styles = StyleSheet.create({
     paddingBottom: 18,
   },
   title: {
+    fontFamily: theme.fonts.black,
     fontSize: 38,
     fontWeight: '900',
     color: theme.colors.text,

@@ -1319,3 +1319,20 @@
 - `assets/splash-icon.png`
 - `components/LaunchSplash.tsx`
 - `DEVELOPMENT_LOG.md`
+
+### 2026-06-16 21:25 JST
+
+作業:
+- Brutalistページ左上の`PEELZY PAGE`ラベルを削除。
+- ホームの`My Books`とClassic表紙のシール帳名を、詳細画面タイトルと同じ`Nunito_900Black`へ統一。
+- 新規シール帳作成時のデフォルト名を`New Book N`へ変更。
+
+検証:
+- `./node_modules/.bin/tsc --noEmit --pretty false`
+- `git diff --check`
+
+ファイル:
+- `app/(app)/home.tsx`
+- `app/(app)/book-detail.tsx`
+- `components/BookCover/ClassicCover.tsx`
+- `DEVELOPMENT_LOG.md`

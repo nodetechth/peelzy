@@ -689,12 +689,6 @@ function PageCanvas({
         ))}
       </View>
 
-      {isBrutalist && (
-        <View pointerEvents="none" style={styles.brutalistLabel}>
-          <Text style={styles.brutalistLabelText}>PEELZY PAGE</Text>
-        </View>
-      )}
-
       {isFilm && (
         <>
           <View pointerEvents="none" style={styles.filmOuterBorder} />
@@ -3158,22 +3152,6 @@ const styles = StyleSheet.create({
   },
   gridLineFilm: {
     backgroundColor: 'rgba(123, 97, 255, 0.16)',
-  },
-  brutalistLabel: {
-    position: 'absolute',
-    left: 14,
-    top: 12,
-    backgroundColor: '#1A1A1A',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 4,
-  },
-  brutalistLabelText: {
-    color: '#FFFFFF',
-    fontFamily: 'Courier',
-    fontSize: 10,
-    fontWeight: '700',
-    letterSpacing: 1,
   },
   filmPerforationLayer: {
     ...StyleSheet.absoluteFillObject,
