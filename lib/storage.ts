@@ -8,6 +8,7 @@ const STICKER_THUMBNAIL_MAX_EDGE = 320;
 const STICKER_STORAGE_CACHE_CONTROL_SECONDS = '31536000';
 const STICKER_DISPLAY_COLUMNS =
   'id, user_id, image_url, thumbnail_url, page_index, pos_x, pos_y, rotation, book_id, created_at, metadata';
+const STICKER_SYNC_COLUMNS = `${STICKER_DISPLAY_COLUMNS}, updated_at`;
 const BOOK_PAGE_ELEMENT_DISPLAY_COLUMNS =
   'id, user_id, book_id, page_index, type, content, pos_x, pos_y, rotation, color, style, created_at, updated_at';
 const EXCHANGE_OFFER_DISPLAY_COLUMNS =
@@ -66,7 +67,13 @@ export type Sticker = {
   rotation: number;
   book_id: string | null;
   created_at: string;
+  updated_at?: string | null;
   metadata?: Record<string, unknown>;
+};
+
+export type StickerDeletion = {
+  sticker_id: string;
+  deleted_at: string;
 };
 
 export function getStickerDisplayScale(sticker: Pick<Sticker, 'metadata'>): number {
@@ -914,6 +921,58 @@ export async function getAllStickers(): Promise<{ stickers: Sticker[]; error: Er
     return { stickers: data as Sticker[], error: null };
   } catch (error) {
     return { stickers: [], error: error as Error };
+  }
+}
+
+export async function getStickerChangesSince(
+  since: string
+): Promise<{ stickers: Sticker[]; error: Error | null }> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      return { stickers: [], error: new Error('User not authenticated') };
+    }
+
+    const { data, error } = await supabase
+      .from('stickers')
+      .select(STICKER_SYNC_COLUMNS)
+      .eq('user_id', user.id)
+      .gt('updated_at', since)
+      .order('updated_at', { ascending: true });
+
+    if (error) {
+      return { stickers: [], error };
+    }
+
+    return { stickers: data as Sticker[], error: null };
+  } catch (error) {
+    return { stickers: [], error: error as Error };
+  }
+}
+
+export async function getStickerDeletionsSince(
+  since: string
+): Promise<{ deletions: StickerDeletion[]; error: Error | null }> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      return { deletions: [], error: new Error('User not authenticated') };
+    }
+
+    const { data, error } = await supabase
+      .from('sticker_deletions')
+      .select('sticker_id, deleted_at')
+      .eq('user_id', user.id)
+      .gt('deleted_at', since)
+      .order('deleted_at', { ascending: true });
+
+    if (error) {
+      return { deletions: [], error };
+    }
+
+    return { deletions: data as StickerDeletion[], error: null };
+  } catch (error) {
+    return { deletions: [], error: error as Error };
   }
 }
 

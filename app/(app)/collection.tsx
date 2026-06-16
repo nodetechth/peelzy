@@ -31,6 +31,8 @@ import {
   getBooks,
   getMyExchangeOffers,
   getStickerOwnerHistory,
+  getStickerChangesSince,
+  getStickerDeletionsSince,
   getStickerDisplayScale,
   getStickerThumbnailUrl,
   deleteExchangeOffer,
@@ -42,6 +44,7 @@ import {
   ExchangeOffer,
   ExchangeProposal,
   Sticker,
+  StickerDeletion,
   StickerOwnerHistoryEntry,
 } from '../../lib/storage';
 import {
@@ -60,11 +63,48 @@ const GRID_ROW_HEIGHT = CARD_SIZE + GRID_GAP;
 
 type TabType = 'all' | 'unplaced' | 'offers';
 
+const SYNC_OVERLAP_MS = 5000;
+
 const getGridItemLayout = (_: ArrayLike<Sticker> | null | undefined, index: number) => ({
   length: GRID_ROW_HEIGHT,
   offset: Math.floor(index / NUM_COLUMNS) * GRID_ROW_HEIGHT,
   index,
 });
+
+function sortStickersByCreatedAt(stickers: Sticker[]) {
+  return [...stickers].sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  );
+}
+
+function getDeltaSinceTimestamp(value: string) {
+  const time = new Date(value).getTime();
+  if (!Number.isFinite(time)) return value;
+  return new Date(Math.max(0, time - SYNC_OVERLAP_MS)).toISOString();
+}
+
+function mergeStickerDelta(
+  current: Sticker[],
+  changed: Sticker[],
+  deletions: StickerDeletion[]
+) {
+  const deletedIds = new Set(deletions.map((deletion) => deletion.sticker_id));
+  const byId = new Map<string, Sticker>();
+
+  current.forEach((sticker) => {
+    if (!deletedIds.has(sticker.id)) {
+      byId.set(sticker.id, sticker);
+    }
+  });
+
+  changed.forEach((sticker) => {
+    if (!deletedIds.has(sticker.id)) {
+      byId.set(sticker.id, sticker);
+    }
+  });
+
+  return sortStickersByCreatedAt([...byId.values()]);
+}
 
 type StickerCellProps = {
   sticker: Sticker;
@@ -119,6 +159,7 @@ export default function CollectionScreen() {
   const [exchangeOffers, setExchangeOffers] = useState<ExchangeOffer[]>([]);
   const [offersLoading, setOffersLoading] = useState(false);
   const [offersLoaded, setOffersLoaded] = useState(false);
+  const [lastStickerSyncAt, setLastStickerSyncAt] = useState<string | null>(null);
   const [expandedOfferId, setExpandedOfferId] = useState<string | null>(null);
 
   const [selectedSticker, setSelectedSticker] = useState<Sticker | null>(null);
@@ -148,6 +189,7 @@ export default function CollectionScreen() {
   const allBooksRef = useRef<Book[]>([]);
   const exchangeOffersRef = useRef<ExchangeOffer[]>([]);
   const offersLoadedRef = useRef(false);
+  const lastStickerSyncAtRef = useRef<string | null>(null);
 
   const translateY = useRef(new Animated.Value(0)).current;
   const translateX = useRef(new Animated.Value(0)).current;
@@ -193,6 +235,10 @@ export default function CollectionScreen() {
     offersLoadedRef.current = offersLoaded;
   }, [offersLoaded]);
 
+  useEffect(() => {
+    lastStickerSyncAtRef.current = lastStickerSyncAt;
+  }, [lastStickerSyncAt]);
+
   const warmCollectionImages = useCallback((stickers: Sticker[], offers: ExchangeOffer[] = []) => {
     warmStickerImageCache([
       ...stickers.slice(0, 30).map(getStickerThumbnailUrl),
@@ -210,6 +256,7 @@ export default function CollectionScreen() {
     books?: Book[];
     exchangeOffers?: ExchangeOffer[];
     exchangeOffersLoaded?: boolean;
+    lastStickerSyncAt?: string | null;
   }) => {
     if (!user?.id) return;
 
@@ -218,6 +265,7 @@ export default function CollectionScreen() {
       books: snapshot.books ?? allBooksRef.current,
       exchangeOffers: snapshot.exchangeOffers ?? exchangeOffersRef.current,
       exchangeOffersLoaded: snapshot.exchangeOffersLoaded ?? offersLoadedRef.current,
+      lastStickerSyncAt: snapshot.lastStickerSyncAt ?? lastStickerSyncAtRef.current,
     });
   }, [user?.id]);
 
@@ -237,6 +285,7 @@ export default function CollectionScreen() {
       setAllBooks(cached.books);
       setExchangeOffers(cached.exchangeOffers);
       setOffersLoaded(cached.exchangeOffersLoaded);
+      setLastStickerSyncAt(cached.lastStickerSyncAt);
       setLoading(false);
       warmCollectionImages(cached.stickers, cached.exchangeOffers);
     };
@@ -287,19 +336,56 @@ export default function CollectionScreen() {
     fetchRequestRef.current = requestId;
 
     try {
-      const [allResult, booksResult] = await Promise.all([
-        getAllStickers(),
-        getBooks(),
-      ]);
+      const syncCompletedAt = new Date().toISOString();
+      const lastSync = lastStickerSyncAtRef.current;
+      let nextStickers: Sticker[] | null = null;
+      let nextSyncAt = syncCompletedAt;
+      const booksPromise = getBooks();
+
+      if (lastSync) {
+        const since = getDeltaSinceTimestamp(lastSync);
+        const [changesResult, deletionsResult] = await Promise.all([
+          getStickerChangesSince(since),
+          getStickerDeletionsSince(since),
+        ]);
+
+        if (!changesResult.error && !deletionsResult.error) {
+          nextStickers = mergeStickerDelta(
+            allStickersRef.current,
+            changesResult.stickers,
+            deletionsResult.deletions
+          );
+        } else {
+          console.warn('Collection delta sync failed, falling back to full fetch:', {
+            changesError: changesResult.error,
+            deletionsError: deletionsResult.error,
+          });
+        }
+      }
+
+      if (!nextStickers) {
+        const allResult = await getAllStickers();
+        if (allResult.error) {
+          throw allResult.error;
+        }
+        nextStickers = sortStickersByCreatedAt(allResult.stickers);
+      }
+
+      const booksResult = await booksPromise;
+      if (booksResult.error) {
+        throw booksResult.error;
+      }
 
       if (fetchRequestRef.current !== requestId) return;
 
-      setAllStickers(allResult.stickers);
+      setAllStickers(nextStickers);
       setAllBooks(booksResult.books);
-      warmCollectionImages(allResult.stickers, exchangeOffersRef.current);
+      setLastStickerSyncAt(nextSyncAt);
+      warmCollectionImages(nextStickers, exchangeOffersRef.current);
       cacheCollectionSnapshot({
-        stickers: allResult.stickers,
+        stickers: nextStickers,
         books: booksResult.books,
+        lastStickerSyncAt: nextSyncAt,
       });
 
       if (options?.includeOffers) {

@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { Book, ExchangeOffer, Sticker } from './storage';
 
-const CACHE_VERSION = 1;
+const CACHE_VERSION = 2;
 const COLLECTION_CACHE_PREFIX = 'peelzy:collection';
 
 export type CachedCollectionSnapshot = {
@@ -9,6 +9,7 @@ export type CachedCollectionSnapshot = {
   books: Book[];
   exchangeOffers: ExchangeOffer[];
   exchangeOffersLoaded: boolean;
+  lastStickerSyncAt: string | null;
 };
 
 type StoredCollectionSnapshot = CachedCollectionSnapshot & {
@@ -33,7 +34,8 @@ export async function getCachedCollectionSnapshot(userId: string): Promise<Cache
       !Array.isArray(cached.stickers) ||
       !Array.isArray(cached.books) ||
       !Array.isArray(cached.exchangeOffers) ||
-      typeof cached.exchangeOffersLoaded !== 'boolean'
+      typeof cached.exchangeOffersLoaded !== 'boolean' ||
+      (cached.lastStickerSyncAt !== null && typeof cached.lastStickerSyncAt !== 'string')
     ) {
       return null;
     }
@@ -43,6 +45,7 @@ export async function getCachedCollectionSnapshot(userId: string): Promise<Cache
       books: cached.books,
       exchangeOffers: cached.exchangeOffers,
       exchangeOffersLoaded: cached.exchangeOffersLoaded,
+      lastStickerSyncAt: cached.lastStickerSyncAt ?? null,
     };
   } catch (error) {
     console.warn('Failed to read cached collection:', error);

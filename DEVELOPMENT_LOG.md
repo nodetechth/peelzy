@@ -1194,3 +1194,21 @@
 - `lib/collectionCache.ts`
 - `lib/storage.ts`
 - `DEVELOPMENT_LOG.md`
+
+### 2026-06-16 JST
+
+作業:
+- RPCを使わずにCollection差分同期を行うため、`stickers.updated_at`と`sticker_deletions`削除履歴テーブルのマイグレーションを追加。
+- `stickers`更新時に`updated_at`を更新するtriggerと、削除時に削除履歴を記録するtriggerを追加。
+- Collectionキャッシュに`lastStickerSyncAt`を保存し、次回以降はRESTで変更シールと削除IDだけ取得してローカル一覧へマージ。
+- 差分同期に失敗した場合は全件取得へフォールバックするよう変更。
+
+検証:
+- `./node_modules/.bin/tsc --noEmit --pretty false`
+
+ファイル:
+- `app/(app)/collection.tsx`
+- `lib/collectionCache.ts`
+- `lib/storage.ts`
+- `supabase/migrations/20260616103036_add_collection_delta_sync.sql`
+- `DEVELOPMENT_LOG.md`
