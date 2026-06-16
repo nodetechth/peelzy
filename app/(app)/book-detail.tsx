@@ -79,9 +79,6 @@ const SWIPE_THRESHOLD = 60;
 const VELOCITY_THRESHOLD = 200;
 const MIN_PAGE_ZOOM = 1;
 const MAX_PAGE_ZOOM = 2.4;
-const PAGE_EDGE_HOLD_DELAY_MS = 1400;
-const PAGE_TURN_TARGET_WIDTH = 92;
-const PAGE_TURN_TARGET_HEIGHT = 150;
 const STICKER_HIT_EXPANSION = 12;
 const MIN_STICKER_HIT_SIZE = 44;
 const ELEMENT_COLORS = PEELZY_COLORS;
@@ -299,8 +296,9 @@ type Pages = Record<number, Sticker[]>;
 type ElementsByPage = Record<number, BookPageElement[]>;
 type CanvasSelectionType = 'sticker' | 'element' | null;
 type SelectionAction = {
-  type: 'done' | 'peel' | 'delete' | 'edit' | 'scaleUp' | 'scaleDown' | 'rotateLeft' | 'rotateRight';
+  type: 'done' | 'peel' | 'delete' | 'edit' | 'scaleUp' | 'scaleDown' | 'rotateLeft' | 'rotateRight' | 'moveToPage';
   nonce: number;
+  targetPage?: number;
 };
 type CanvasScreenFrame = { x: number; y: number; width: number; height: number } | null;
 
@@ -309,9 +307,9 @@ type PageCanvasProps = {
   elements: BookPageElement[];
   isArranging: boolean;
   onStickerTransform: (id: string, pos_x: number, pos_y: number, rotation: number, bookScale: number) => void;
-  onStickerMoveToAdjacentPage: (
+  onStickerMoveToPage: (
     id: string,
-    direction: 'previous' | 'next',
+    targetPage: number,
     pos_x: number,
     pos_y: number,
     rotation: number,
@@ -319,9 +317,9 @@ type PageCanvasProps = {
   ) => void;
   onStickerPeelOff: (id: string) => void;
   onElementMove: (id: string, pos_x: number, pos_y: number, rotation: number, scale: number) => void;
-  onElementMoveToAdjacentPage: (
+  onElementMoveToPage: (
     id: string,
-    direction: 'previous' | 'next',
+    targetPage: number,
     pos_x: number,
     pos_y: number,
     rotation: number,
@@ -352,10 +350,10 @@ function PageCanvas({
   elements,
   isArranging,
   onStickerTransform,
-  onStickerMoveToAdjacentPage,
+  onStickerMoveToPage,
   onStickerPeelOff,
   onElementMove,
-  onElementMoveToAdjacentPage,
+  onElementMoveToPage,
   onElementDelete,
   onElementEditRequest,
   onEmptyPress,
@@ -415,6 +413,36 @@ function PageCanvas({
 
     if (selectionAction.type === 'edit' && selectedElement) {
       onElementEditRequest(selectedElement);
+    }
+
+    if (
+      selectionAction.type === 'moveToPage' &&
+      typeof selectionAction.targetPage === 'number' &&
+      selectionAction.targetPage !== currentPage
+    ) {
+      if (selectedSticker) {
+        onStickerMoveToPage(
+          selectedSticker.id,
+          selectionAction.targetPage,
+          selectedSticker.pos_x ?? 0.5,
+          selectedSticker.pos_y ?? 0.5,
+          selectedSticker.rotation ?? 0,
+          getStickerBookScale(selectedSticker)
+        );
+        setSelectedStickerId(null);
+      }
+
+      if (selectedElement) {
+        onElementMoveToPage(
+          selectedElement.id,
+          selectionAction.targetPage,
+          selectedElement.pos_x,
+          selectedElement.pos_y,
+          selectedElement.rotation ?? 0,
+          getElementScale(selectedElement)
+        );
+        setSelectedElementId(null);
+      }
     }
 
     if (
@@ -492,8 +520,11 @@ function PageCanvas({
     onElementDelete,
     onElementEditRequest,
     onElementMove,
+    onElementMoveToPage,
     onSelectionActionHandled,
+    onStickerMoveToPage,
     onStickerTransform,
+    currentPage,
     selectedElement,
     selectedSticker,
     selectionAction,
@@ -684,10 +715,6 @@ function PageCanvas({
           canvasHeight={canvasHeight}
           onTap={() => handleElementTap(element)}
           onTransform={onElementMove}
-          onMoveToAdjacentPage={onElementMoveToAdjacentPage}
-          canMoveToPreviousPage={currentPage > 0}
-          canMoveToNextPage={currentPage < 4}
-          canvasScreenFrame={canvasScreenFrame}
         />
       ))}
 
@@ -700,14 +727,10 @@ function PageCanvas({
           canvasHeight={canvasHeight}
           onTap={() => handleStickerTap(sticker)}
           onTransform={onStickerTransform}
-          onMoveToAdjacentPage={onStickerMoveToAdjacentPage}
-          canMoveToPreviousPage={currentPage > 0}
-          canMoveToNextPage={currentPage < 4}
           isNewlyPlaced={sticker.id === newlyPlacedId}
           pageZoom={pageZoom}
           pagePanX={pagePanX}
           pagePanY={pagePanY}
-          canvasScreenFrame={canvasScreenFrame}
           allowVisibleOverflowDrag
         />
       ))}
@@ -769,17 +792,6 @@ type DraggablePageElementProps = {
   canvasHeight: number;
   onTap: () => void;
   onTransform: (id: string, pos_x: number, pos_y: number, rotation: number, scale: number) => void;
-  onMoveToAdjacentPage: (
-    id: string,
-    direction: 'previous' | 'next',
-    pos_x: number,
-    pos_y: number,
-    rotation: number,
-    scale: number
-  ) => void;
-  canMoveToPreviousPage: boolean;
-  canMoveToNextPage: boolean;
-  canvasScreenFrame: CanvasScreenFrame;
 };
 
 function getElementSize(element: BookPageElement) {
@@ -809,10 +821,6 @@ function DraggablePageElement({
   canvasHeight,
   onTap,
   onTransform,
-  onMoveToAdjacentPage,
-  canMoveToPreviousPage,
-  canMoveToNextPage,
-  canvasScreenFrame,
 }: DraggablePageElementProps) {
   const baseSize = getElementSize(element);
   const initialScale = getElementScale(element);
@@ -834,21 +842,6 @@ function DraggablePageElement({
   const gestureStartAngleRef = useRef(0);
   const gestureStartScaleRef = useRef(initialScale);
   const gestureStartRotationRef = useRef(element.rotation ?? 0);
-  const edgeHoldDirectionRef = useRef<'previous' | 'next' | null>(null);
-  const edgeHoldTargetRef = useRef({ x: 0.5, y: 0.5 });
-  const edgeHoldTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const touchOffsetFromCenterRef = useRef({ x: 0, y: 0 });
-
-  const clearEdgeHold = useCallback(() => {
-    if (edgeHoldTimeoutRef.current) {
-      clearTimeout(edgeHoldTimeoutRef.current);
-      edgeHoldTimeoutRef.current = null;
-    }
-    edgeHoldDirectionRef.current = null;
-  }, []);
-
-  useEffect(() => clearEdgeHold, [clearEdgeHold]);
-
   useEffect(() => {
     const nextScale = getElementScale(element);
     const nextRotation = element.rotation ?? 0;
@@ -894,63 +887,6 @@ function DraggablePageElement({
     };
   }, [baseSize.height, baseSize.width, canvasHeight, canvasWidth]);
 
-  const getPageTurnDirection = useCallback((fingerX: number, fingerY: number) => {
-    if (!canvasScreenFrame) return null;
-
-    const centerY = canvasScreenFrame.y + canvasScreenFrame.height / 2;
-    const inVerticalTarget = Math.abs(fingerY - centerY) <= PAGE_TURN_TARGET_HEIGHT / 2;
-    if (!inVerticalTarget) return null;
-
-    const leftTargetMin = canvasScreenFrame.x - PAGE_TURN_TARGET_WIDTH / 2;
-    const leftTargetMax = canvasScreenFrame.x + PAGE_TURN_TARGET_WIDTH / 2;
-    const rightTargetMin = canvasScreenFrame.x + canvasScreenFrame.width - PAGE_TURN_TARGET_WIDTH / 2;
-    const rightTargetMax = canvasScreenFrame.x + canvasScreenFrame.width + PAGE_TURN_TARGET_WIDTH / 2;
-
-    if (canMoveToPreviousPage && fingerX >= leftTargetMin && fingerX <= leftTargetMax) {
-      return 'previous';
-    }
-    if (canMoveToNextPage && fingerX >= rightTargetMin && fingerX <= rightTargetMax) {
-      return 'next';
-    }
-    return null;
-  }, [canMoveToNextPage, canMoveToPreviousPage, canvasScreenFrame]);
-
-  const getNormalizedFingerPosition = useCallback((fingerX: number, fingerY: number) => {
-    if (!canvasScreenFrame) return { x: 0.5, y: 0.5 };
-    const centerX = fingerX - touchOffsetFromCenterRef.current.x;
-    const centerY = fingerY - touchOffsetFromCenterRef.current.y;
-
-    return {
-      x: clamp((centerX - canvasScreenFrame.x) / canvasScreenFrame.width, 0.08, 0.92),
-      y: clamp((centerY - canvasScreenFrame.y) / canvasScreenFrame.height, 0.08, 0.92),
-    };
-  }, [canvasScreenFrame]);
-
-  const scheduleEdgeHold = useCallback((direction: 'previous' | 'next' | null, target = { x: 0.5, y: 0.5 }) => {
-    if (!direction) {
-      clearEdgeHold();
-      return;
-    }
-
-    edgeHoldTargetRef.current = target;
-    if (edgeHoldDirectionRef.current === direction) return;
-    clearEdgeHold();
-    edgeHoldDirectionRef.current = direction;
-    edgeHoldTimeoutRef.current = setTimeout(() => {
-      const targetPosition = edgeHoldTargetRef.current;
-      clearEdgeHold();
-      onMoveToAdjacentPage(
-        element.id,
-        direction,
-        targetPosition.x,
-        targetPosition.y,
-        normalizeRotation(rotationRef.current),
-        scaleRef.current
-      );
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    }, PAGE_EDGE_HOLD_DELAY_MS);
-  }, [clearEdgeHold, element.id, onMoveToAdjacentPage]);
-
   const panResponder = useMemo(
     () =>
       PanResponder.create({
@@ -967,12 +903,6 @@ function DraggablePageElement({
           const touches = event.nativeEvent.touches;
           setCurrentZIndex(998);
           gestureStartPositionRef.current = { ...positionRef.current };
-          touchOffsetFromCenterRef.current = canvasScreenFrame
-            ? {
-              x: touches[0].pageX - (canvasScreenFrame.x + positionRef.current.x + baseSize.width * scaleRef.current / 2),
-              y: touches[0].pageY - (canvasScreenFrame.y + positionRef.current.y + baseSize.height * scaleRef.current / 2),
-            }
-            : { x: 0, y: 0 };
           pan.setOffset({ x: 0, y: 0 });
           pan.setValue({ x: 0, y: 0 });
 
@@ -1036,7 +966,6 @@ function DraggablePageElement({
             setCurrentScale(nextScale);
             setCurrentRotation(nextRotation);
             setCurrentPos({ x: nextX, y: nextY });
-            clearEdgeHold();
             return;
           }
 
@@ -1045,10 +974,7 @@ function DraggablePageElement({
           const bounds = getDragBounds();
           const nextX = clamp(gestureStartPositionRef.current.x + gestureState.dx, bounds.minX, bounds.maxX);
           const nextY = clamp(gestureStartPositionRef.current.y + gestureState.dy, bounds.minY, bounds.maxY);
-          const edgeDirection = getPageTurnDirection(gestureState.moveX, gestureState.moveY);
-          const targetPosition = getNormalizedFingerPosition(gestureState.moveX, gestureState.moveY);
           positionRef.current = { x: nextX, y: nextY };
-          scheduleEdgeHold(edgeDirection, targetPosition);
           pan.setValue({
             x: nextX - gestureStartPositionRef.current.x,
             y: nextY - gestureStartPositionRef.current.y,
@@ -1065,7 +991,6 @@ function DraggablePageElement({
           if (gestureModeRef.current === 'pinch') {
             pan.setValue({ x: 0, y: 0 });
             gestureModeRef.current = null;
-            clearEdgeHold();
             saveElementTransform(positionRef.current.x, positionRef.current.y);
             Animated.spring(liftScale, {
               toValue: 1,
@@ -1080,7 +1005,6 @@ function DraggablePageElement({
             pan.setOffset({ x: 0, y: 0 });
             pan.setValue({ x: 0, y: 0 });
             gestureModeRef.current = null;
-            clearEdgeHold();
             setCurrentZIndex(2);
             onTap();
             Animated.spring(liftScale, {
@@ -1097,7 +1021,6 @@ function DraggablePageElement({
           const finalY = clamp(positionRef.current.y, bounds.minY, bounds.maxY);
           positionRef.current = { x: finalX, y: finalY };
           setIsCommittingDrop(true);
-          clearEdgeHold();
           pan.setOffset({ x: 0, y: 0 });
           pan.setValue({ x: 0, y: 0 });
           setCurrentPos({ x: finalX, y: finalY });
@@ -1115,16 +1038,12 @@ function DraggablePageElement({
     [
       baseSize.height,
       baseSize.width,
-      clearEdgeHold,
       getDragBounds,
-      getNormalizedFingerPosition,
-      getPageTurnDirection,
       isSelected,
       liftScale,
       onTap,
       pan,
       saveElementTransform,
-      scheduleEdgeHold,
     ]
   );
 
@@ -1178,21 +1097,10 @@ type DraggableStickerProps = {
   canvasHeight: number;
   onTap: () => void;
   onTransform: (id: string, pos_x: number, pos_y: number, rotation: number, bookScale: number) => void;
-  onMoveToAdjacentPage: (
-    id: string,
-    direction: 'previous' | 'next',
-    pos_x: number,
-    pos_y: number,
-    rotation: number,
-    bookScale: number
-  ) => void;
-  canMoveToPreviousPage: boolean;
-  canMoveToNextPage: boolean;
   isNewlyPlaced: boolean;
   pageZoom: number;
   pagePanX: number;
   pagePanY: number;
-  canvasScreenFrame: CanvasScreenFrame;
   allowVisibleOverflowDrag?: boolean;
 };
 
@@ -1203,14 +1111,10 @@ function DraggableSticker({
   canvasHeight,
   onTap,
   onTransform,
-  onMoveToAdjacentPage,
-  canMoveToPreviousPage,
-  canMoveToNextPage,
   isNewlyPlaced,
   pageZoom,
   pagePanX,
   pagePanY,
-  canvasScreenFrame,
   allowVisibleOverflowDrag = false,
 }: DraggableStickerProps) {
   const posX = sticker.pos_x ?? 0.5;
@@ -1261,21 +1165,6 @@ function DraggableSticker({
   const gestureStartAngleRef = useRef(0);
   const gestureStartScaleRef = useRef(initialBookScale);
   const gestureStartRotationRef = useRef(sticker.rotation ?? 0);
-  const edgeHoldDirectionRef = useRef<'previous' | 'next' | null>(null);
-  const edgeHoldTargetRef = useRef({ x: 0.5, y: 0.5 });
-  const edgeHoldTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const touchOffsetFromCenterRef = useRef({ x: 0, y: 0 });
-
-  const clearEdgeHold = useCallback(() => {
-    if (edgeHoldTimeoutRef.current) {
-      clearTimeout(edgeHoldTimeoutRef.current);
-      edgeHoldTimeoutRef.current = null;
-    }
-    edgeHoldDirectionRef.current = null;
-  }, []);
-
-  useEffect(() => clearEdgeHold, [clearEdgeHold]);
-
   const resetTemporaryStickerTransform = useCallback(() => {
     scale.stopAnimation();
     rotate.stopAnimation();
@@ -1324,8 +1213,7 @@ function DraggableSticker({
     resetTemporaryStickerTransform();
     setCurrentZIndex(1);
     setIsDragging(false);
-    clearEdgeHold();
-  }, [clearEdgeHold, isSelected, resetTemporaryStickerTransform]);
+  }, [isSelected, resetTemporaryStickerTransform]);
 
   const getNormalizedPosition = useCallback((finalX: number, finalY: number) => {
     const finalBookScale = bookScaleRef.current;
@@ -1354,66 +1242,6 @@ function DraggableSticker({
       bookScale: finalBookScale,
     });
   }, [getNormalizedPosition, sticker.id, onTransform]);
-
-  const getPageTurnDirection = useCallback((fingerX: number, fingerY: number) => {
-    if (!canvasScreenFrame) return null;
-
-    const centerY = canvasScreenFrame.y + canvasScreenFrame.height / 2;
-    const inVerticalTarget = Math.abs(fingerY - centerY) <= PAGE_TURN_TARGET_HEIGHT / 2;
-    if (!inVerticalTarget) return null;
-
-    const leftTargetMin = canvasScreenFrame.x - PAGE_TURN_TARGET_WIDTH / 2;
-    const leftTargetMax = canvasScreenFrame.x + PAGE_TURN_TARGET_WIDTH / 2;
-    const rightTargetMin = canvasScreenFrame.x + canvasScreenFrame.width - PAGE_TURN_TARGET_WIDTH / 2;
-    const rightTargetMax = canvasScreenFrame.x + canvasScreenFrame.width + PAGE_TURN_TARGET_WIDTH / 2;
-
-    if (canMoveToPreviousPage && fingerX >= leftTargetMin && fingerX <= leftTargetMax) {
-      return 'previous';
-    }
-    if (canMoveToNextPage && fingerX >= rightTargetMin && fingerX <= rightTargetMax) {
-      return 'next';
-    }
-    return null;
-  }, [canMoveToNextPage, canMoveToPreviousPage, canvasScreenFrame]);
-
-  const getNormalizedFingerPosition = useCallback((fingerX: number, fingerY: number) => {
-    if (!canvasScreenFrame) return { x: 0.5, y: 0.5 };
-    const centerX = fingerX - touchOffsetFromCenterRef.current.x;
-    const centerY = fingerY - touchOffsetFromCenterRef.current.y;
-
-    return {
-      x: clamp((centerX - canvasScreenFrame.x) / canvasScreenFrame.width, 0.08, 0.92),
-      y: clamp((centerY - canvasScreenFrame.y) / canvasScreenFrame.height, 0.08, 0.92),
-    };
-  }, [canvasScreenFrame]);
-
-  const scheduleEdgeHold = useCallback((direction: 'previous' | 'next' | null, target = { x: 0.5, y: 0.5 }) => {
-    if (!direction) {
-      clearEdgeHold();
-      return;
-    }
-
-    edgeHoldTargetRef.current = target;
-    if (edgeHoldDirectionRef.current === direction) return;
-    clearEdgeHold();
-    edgeHoldDirectionRef.current = direction;
-    edgeHoldTimeoutRef.current = setTimeout(() => {
-      const targetPosition = edgeHoldTargetRef.current;
-      clearEdgeHold();
-      setCurrentZIndex(1);
-      setIsDragging(false);
-      resetTemporaryStickerTransform();
-      onMoveToAdjacentPage(
-        sticker.id,
-        direction,
-        targetPosition.x,
-        targetPosition.y,
-        normalizeRotation(rotationRef.current),
-        bookScaleRef.current
-      );
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    }, PAGE_EDGE_HOLD_DELAY_MS);
-  }, [clearEdgeHold, onMoveToAdjacentPage, resetTemporaryStickerTransform, sticker.id]);
 
   const animateDropSequence = useCallback((finalX: number, finalY: number) => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -1475,16 +1303,9 @@ function DraggableSticker({
           const touches = event.nativeEvent.touches;
           setCurrentZIndex(999);
           setIsDragging(true);
-          clearEdgeHold();
           pan.setOffset({ x: 0, y: 0 });
           pan.setValue({ x: 0, y: 0 });
           gestureStartPositionRef.current = { ...positionRef.current };
-          touchOffsetFromCenterRef.current = canvasScreenFrame
-            ? {
-              x: touches[0].pageX - (canvasScreenFrame.x + positionRef.current.x + stickerSize / 2),
-              y: touches[0].pageY - (canvasScreenFrame.y + positionRef.current.y + stickerSize / 2),
-            }
-            : { x: 0, y: 0 };
           if (touches.length >= 2) {
             gestureModeRef.current = 'pinch';
             gestureStartDistanceRef.current = getTouchDistance(touches);
@@ -1543,8 +1364,6 @@ function DraggableSticker({
               : getStickerDragBounds(canvasWidth, canvasHeight, newSize, hitFrame);
             const nextX = clamp(centerX - newSize / 2, dragBounds.minX, dragBounds.maxX);
             const nextY = clamp(centerY - newSize / 2, dragBounds.minY, dragBounds.maxY);
-
-            clearEdgeHold();
             bookScaleRef.current = nextScale;
             rotationRef.current = nextRotation;
             positionRef.current = { x: nextX, y: nextY };
@@ -1568,10 +1387,6 @@ function DraggableSticker({
             dragBounds.minY,
             dragBounds.maxY
           );
-          const edgeDirection = getPageTurnDirection(gestureState.moveX, gestureState.moveY);
-          const targetPosition = getNormalizedFingerPosition(gestureState.moveX, gestureState.moveY);
-
-          scheduleEdgeHold(edgeDirection, targetPosition);
           positionRef.current = { x: nextX, y: nextY };
           pan.setValue({
             x: nextX - gestureStartPositionRef.current.x,
@@ -1589,7 +1404,6 @@ function DraggableSticker({
           if (gestureModeRef.current === 'pinch') {
             pan.setValue({ x: 0, y: 0 });
             gestureModeRef.current = null;
-            clearEdgeHold();
             persistCurrentTransform();
             Animated.parallel([
               Animated.spring(scale, {
@@ -1615,7 +1429,6 @@ function DraggableSticker({
             pan.setOffset({ x: 0, y: 0 });
             pan.setValue({ x: 0, y: 0 });
             gestureModeRef.current = null;
-            clearEdgeHold();
             setCurrentZIndex(1);
             setIsDragging(false);
             resetTemporaryStickerTransform();
@@ -1623,7 +1436,6 @@ function DraggableSticker({
             return;
           }
 
-          clearEdgeHold();
           const dragBounds = allowVisibleOverflowDrag
             ? getStickerLayoutDragBounds(canvasWidth, canvasHeight, stickerSize)
             : getStickerDragBounds(canvasWidth, canvasHeight, stickerSize, hitFrame);
@@ -1644,22 +1456,16 @@ function DraggableSticker({
       allowVisibleOverflowDrag,
       canvasWidth,
       canvasHeight,
-      canvasScreenFrame,
-      getNormalizedFingerPosition,
-      getPageTurnDirection,
       stickerSize,
       pageZoom,
       hitFrame,
-      canMoveToPreviousPage,
-      canMoveToNextPage,
       animateDropSequence,
       persistCurrentTransform,
       pan,
       rotate,
       scale,
       onTap,
-      clearEdgeHold,
-      scheduleEdgeHold,
+      resetTemporaryStickerTransform,
     ]
   );
 
@@ -1765,6 +1571,8 @@ export default function BookDetailScreen() {
   const [selectionAction, setSelectionAction] = useState<SelectionAction | null>(null);
   const [clearSelectionNonce, setClearSelectionNonce] = useState(0);
   const [canvasScreenFrame, setCanvasScreenFrame] = useState<CanvasScreenFrame>(null);
+  const [showMovePagePopup, setShowMovePagePopup] = useState(false);
+  const [moveNotice, setMoveNotice] = useState<string | null>(null);
 
   const [showAddSheet, setShowAddSheet] = useState(false);
   const [showShareSheet, setShowShareSheet] = useState(false);
@@ -1798,6 +1606,7 @@ export default function BookDetailScreen() {
     setIsStickerSelected(false);
     setSelectedCanvasItemType(null);
     setSelectionAction(null);
+    setShowMovePagePopup(false);
     setClearSelectionNonce((value) => value + 1);
   }, []);
 
@@ -2134,16 +1943,15 @@ export default function BookDetailScreen() {
     });
   }, [cachePageSnapshot, currentPage, pageElements]);
 
-  const handleStickerMoveToAdjacentPage = useCallback(async (
+  const handleStickerMoveToPage = useCallback(async (
     id: string,
-    direction: 'previous' | 'next',
+    targetPage: number,
     pos_x: number,
     pos_y: number,
     rotation: number,
     bookScale: number
   ) => {
-    const targetPage = direction === 'previous' ? currentPage - 1 : currentPage + 1;
-    if (targetPage < 0 || targetPage > 4) return;
+    if (targetPage < 0 || targetPage > 4 || targetPage === currentPage) return;
 
     const sourceSticker = (pages[currentPage] || []).find((sticker) => sticker.id === id);
     if (!sourceSticker) return;
@@ -2177,11 +1985,8 @@ export default function BookDetailScreen() {
         pageElements[targetPage] || []
       );
     }
-    setCurrentPage(targetPage);
     setIsStickerSelected(false);
     setSelectedCanvasItemType(null);
-    setNewlyPlacedId(id);
-    setTimeout(() => setNewlyPlacedId(null), 700);
 
     const { error } = await updateStickerBookPageTransform(id, {
       page_index: targetPage,
@@ -2192,7 +1997,7 @@ export default function BookDetailScreen() {
     });
 
     if (error) {
-      console.error('Error moving sticker to adjacent page:', error);
+      console.error('Error moving sticker to page:', error);
       await Promise.all([loadPage(currentPage, true), loadPage(targetPage, true)]);
     } else {
       await loadPage(targetPage, true);
@@ -2213,16 +2018,15 @@ export default function BookDetailScreen() {
     });
   }, [cachePageSnapshot, currentPage, pages]);
 
-  const handleElementMoveToAdjacentPage = useCallback(async (
+  const handleElementMoveToPage = useCallback(async (
     id: string,
-    direction: 'previous' | 'next',
+    targetPage: number,
     pos_x: number,
     pos_y: number,
     rotation: number,
     scale: number
   ) => {
-    const targetPage = direction === 'previous' ? currentPage - 1 : currentPage + 1;
-    if (targetPage < 0 || targetPage > 4) return;
+    if (targetPage < 0 || targetPage > 4 || targetPage === currentPage) return;
 
     const sourceElement = (pageElements[currentPage] || []).find((element) => element.id === id);
     if (!sourceElement) return;
@@ -2256,7 +2060,6 @@ export default function BookDetailScreen() {
         [...(pageElements[targetPage] || []), movedElement]
       );
     }
-    setCurrentPage(targetPage);
     setIsStickerSelected(false);
     setSelectedCanvasItemType(null);
 
@@ -2269,7 +2072,7 @@ export default function BookDetailScreen() {
     });
 
     if (error) {
-      console.error('Error moving page element to adjacent page:', error);
+      console.error('Error moving page element to page:', error);
       await Promise.all([loadPage(currentPage, true), loadPage(targetPage, true)]);
     } else {
       await loadPage(targetPage, true);
@@ -2573,9 +2376,26 @@ export default function BookDetailScreen() {
     }
   }, [bookId, bookPageColor]);
 
-  const requestStickerSelectionAction = useCallback((type: SelectionAction['type']) => {
-    setSelectionAction({ type, nonce: Date.now() });
+  const requestStickerSelectionAction = useCallback((type: SelectionAction['type'], targetPage?: number) => {
+    setSelectionAction({ type, targetPage, nonce: Date.now() });
   }, []);
+
+  const toggleMovePagePopup = useCallback(() => {
+    setShowMovePagePopup((visible) => !visible);
+  }, []);
+
+  const handleMoveToPagePress = useCallback((targetPage: number) => {
+    if (targetPage === currentPage) return;
+
+    setShowMovePagePopup(false);
+    setMoveNotice(`Moved to Page ${targetPage + 1}`);
+    requestStickerSelectionAction('moveToPage', targetPage);
+    Haptics.selectionAsync();
+
+    setTimeout(() => {
+      setMoveNotice(null);
+    }, 1500);
+  }, [currentPage, requestStickerSelectionAction]);
 
   const renderPageIndicator = () => {
     return (
@@ -2654,10 +2474,10 @@ export default function BookDetailScreen() {
               elements={elements}
               isArranging={isArrangeMode}
               onStickerTransform={handleStickerTransform}
-              onStickerMoveToAdjacentPage={handleStickerMoveToAdjacentPage}
+              onStickerMoveToPage={handleStickerMoveToPage}
               onStickerPeelOff={handleStickerPeelOff}
               onElementMove={handleElementMove}
-              onElementMoveToAdjacentPage={handleElementMoveToAdjacentPage}
+              onElementMoveToPage={handleElementMoveToPage}
               onElementDelete={handleElementDelete}
               onElementEditRequest={handleEditElementRequest}
               onEmptyPress={handleAddButtonPress}
@@ -2693,18 +2513,6 @@ export default function BookDetailScreen() {
           >
             <Text style={styles.arrowText}>{'>'}</Text>
           </TouchableOpacity>
-        )}
-
-        {selectedCanvasItemType !== null && currentPage > 0 && (
-          <View pointerEvents="none" style={[styles.pageTurnTarget, styles.pageTurnTargetLeft]}>
-            <Text style={styles.pageTurnTargetText}>{'‹'}</Text>
-          </View>
-        )}
-
-        {selectedCanvasItemType !== null && currentPage < 4 && (
-          <View pointerEvents="none" style={[styles.pageTurnTarget, styles.pageTurnTargetRight]}>
-            <Text style={styles.pageTurnTargetText}>{'›'}</Text>
-          </View>
         )}
 
       </View>
@@ -2762,46 +2570,97 @@ export default function BookDetailScreen() {
 
       {renderCanvas()}
 
-      {isStickerSelected ? (
-        <View style={[styles.selectionToolDock, { bottom: TAB_BAR_HEIGHT + insets.bottom + 24 }]}>
-          <TouchableOpacity style={styles.selectionToolButton} onPress={() => requestStickerSelectionAction('done')}>
-            <Text style={styles.selectionToolIcon}>✓</Text>
-            <Text style={styles.selectionToolLabel}>Done</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.selectionToolButton} onPress={() => requestStickerSelectionAction('scaleDown')}>
-            <Text style={styles.selectionToolIcon}>−</Text>
-            <Text style={styles.selectionToolLabel}>Size</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.selectionToolButton} onPress={() => requestStickerSelectionAction('scaleUp')}>
-            <Text style={styles.selectionToolIcon}>＋</Text>
-            <Text style={styles.selectionToolLabel}>Size</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.selectionToolButton} onPress={() => requestStickerSelectionAction('rotateLeft')}>
-            <Text style={styles.selectionToolIcon}>↺</Text>
-            <Text style={styles.selectionToolLabel}>Turn</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.selectionToolButton} onPress={() => requestStickerSelectionAction('rotateRight')}>
-            <Text style={styles.selectionToolIcon}>↻</Text>
-            <Text style={styles.selectionToolLabel}>Turn</Text>
-          </TouchableOpacity>
-          {selectedCanvasItemType === 'element' && (
-            <TouchableOpacity style={styles.selectionToolButton} onPress={() => requestStickerSelectionAction('edit')}>
-              <Text style={styles.selectionToolIcon}>Aa</Text>
-              <Text style={styles.selectionToolLabel}>Edit</Text>
-            </TouchableOpacity>
-          )}
-          <TouchableOpacity
-            style={[styles.selectionToolButton, styles.selectionToolDangerButton]}
-            onPress={() => requestStickerSelectionAction(selectedCanvasItemType === 'element' ? 'delete' : 'peel')}
-          >
-            <Text style={[styles.selectionToolIcon, styles.selectionToolDangerIcon]}>
-              {selectedCanvasItemType === 'element' ? '×' : '↯'}
-            </Text>
-            <Text style={[styles.selectionToolLabel, styles.selectionToolDangerLabel]}>
-              {selectedCanvasItemType === 'element' ? 'Delete' : 'Peel'}
-            </Text>
-          </TouchableOpacity>
+      {showMovePagePopup && (
+        <TouchableOpacity
+          style={styles.movePopupDismissLayer}
+          activeOpacity={1}
+          onPress={() => setShowMovePagePopup(false)}
+        />
+      )}
+
+      {moveNotice && (
+        <View pointerEvents="none" style={[styles.moveNotice, { bottom: TAB_BAR_HEIGHT + insets.bottom + 104 }]}>
+          <Text style={styles.moveNoticeText}>{moveNotice}</Text>
         </View>
+      )}
+
+      {isStickerSelected ? (
+        <>
+          {showMovePagePopup && (
+            <View style={[styles.movePagePopup, { bottom: TAB_BAR_HEIGHT + insets.bottom + 94 }]}>
+              {Array.from({ length: 5 }, (_, page) => {
+                const isCurrent = page === currentPage;
+                return (
+                  <TouchableOpacity
+                    key={page}
+                    style={[
+                      styles.movePageButton,
+                      isCurrent && styles.movePageButtonDisabled,
+                    ]}
+                    onPress={() => handleMoveToPagePress(page)}
+                    disabled={isCurrent}
+                    activeOpacity={0.78}
+                  >
+                    <Text style={[
+                      styles.movePageButtonText,
+                      isCurrent && styles.movePageButtonTextDisabled,
+                    ]}>
+                      Page {page + 1}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          )}
+
+          <View style={[styles.selectionToolDock, { bottom: TAB_BAR_HEIGHT + insets.bottom + 24 }]}>
+            <TouchableOpacity style={styles.selectionIconButton} onPress={() => requestStickerSelectionAction('done')}>
+              <Text style={styles.selectionToolIcon}>✓</Text>
+            </TouchableOpacity>
+
+            <View style={styles.selectionStepper}>
+              <TouchableOpacity style={styles.selectionStepperSide} onPress={() => requestStickerSelectionAction('scaleDown')}>
+                <Text style={styles.selectionStepperIcon}>−</Text>
+              </TouchableOpacity>
+              <Text style={styles.selectionStepperLabel}>Size</Text>
+              <TouchableOpacity style={styles.selectionStepperSide} onPress={() => requestStickerSelectionAction('scaleUp')}>
+                <Text style={styles.selectionStepperIcon}>＋</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.selectionStepper}>
+              <TouchableOpacity style={styles.selectionStepperSide} onPress={() => requestStickerSelectionAction('rotateLeft')}>
+                <Text style={styles.selectionStepperIcon}>↺</Text>
+              </TouchableOpacity>
+              <Text style={styles.selectionStepperLabel}>Turn</Text>
+              <TouchableOpacity style={styles.selectionStepperSide} onPress={() => requestStickerSelectionAction('rotateRight')}>
+                <Text style={styles.selectionStepperIcon}>↻</Text>
+              </TouchableOpacity>
+            </View>
+
+            {selectedCanvasItemType === 'element' && (
+              <TouchableOpacity style={styles.selectionIconButton} onPress={() => requestStickerSelectionAction('edit')}>
+                <Text style={styles.selectionEditText}>Aa</Text>
+              </TouchableOpacity>
+            )}
+
+            <TouchableOpacity
+              style={[styles.selectionMoveButton, showMovePagePopup && styles.selectionMoveButtonActive]}
+              onPress={toggleMovePagePopup}
+            >
+              <Text style={[styles.selectionMoveText, showMovePagePopup && styles.selectionMoveTextActive]}>Move</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.selectionIconButton, styles.selectionToolDangerButton]}
+              onPress={() => requestStickerSelectionAction(selectedCanvasItemType === 'element' ? 'delete' : 'peel')}
+            >
+              <Text style={[styles.selectionToolIcon, styles.selectionToolDangerIcon]}>
+                {selectedCanvasItemType === 'element' ? '×' : '↯'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </>
       ) : (
         <View style={[styles.toolDock, { bottom: TAB_BAR_HEIGHT + insets.bottom + 24 }]}>
           <TouchableOpacity style={styles.toolButton} onPress={handleAddButtonPress}>
@@ -3569,32 +3428,6 @@ const styles = StyleSheet.create({
     shadowRadius: 16,
     elevation: 6,
   },
-  pageTurnTarget: {
-    position: 'absolute',
-    top: '38%',
-    width: PAGE_TURN_TARGET_WIDTH,
-    height: PAGE_TURN_TARGET_HEIGHT,
-    marginTop: -PAGE_TURN_TARGET_HEIGHT / 2,
-    borderRadius: PAGE_TURN_TARGET_WIDTH / 2,
-    backgroundColor: 'rgba(139, 111, 239, 0.10)',
-    borderWidth: 2,
-    borderColor: 'rgba(139, 111, 239, 0.20)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 900,
-  },
-  pageTurnTargetLeft: {
-    left: CANVAS_MARGIN - PAGE_TURN_TARGET_WIDTH / 2,
-  },
-  pageTurnTargetRight: {
-    right: CANVAS_MARGIN - PAGE_TURN_TARGET_WIDTH / 2,
-  },
-  pageTurnTargetText: {
-    color: 'rgba(139, 111, 239, 0.52)',
-    fontSize: 64,
-    fontWeight: '900',
-    marginTop: -6,
-  },
   stickerSelectionHint: {
     flex: 1,
     color: theme.colors.textMuted,
@@ -3689,48 +3522,149 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 12,
     right: 12,
-    minHeight: 64,
+    height: 64,
     borderRadius: 24,
     backgroundColor: 'rgba(255, 253, 248, 0.98)',
     borderWidth: 1,
     borderColor: theme.colors.line,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-around',
-    paddingHorizontal: 6,
+    justifyContent: 'space-between',
+    paddingHorizontal: 8,
     shadowColor: '#7D695C',
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.14,
     shadowRadius: 18,
     elevation: 9,
+    zIndex: 1100,
   },
-  selectionToolButton: {
-    minWidth: 44,
-    height: 50,
-    borderRadius: 16,
+  selectionIconButton: {
+    width: 38,
+    height: 46,
+    borderRadius: 15,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 4,
   },
   selectionToolDangerButton: {
-    minWidth: 50,
+    backgroundColor: '#F1ECE5',
   },
   selectionToolIcon: {
     color: theme.colors.purple,
     fontSize: 21,
     fontWeight: '900',
-    marginBottom: 2,
   },
   selectionToolDangerIcon: {
     color: '#1E1E1E',
   },
-  selectionToolLabel: {
-    color: theme.colors.textMuted,
-    fontSize: 10,
+  selectionEditText: {
+    color: theme.colors.purple,
+    fontSize: 16,
     fontWeight: '900',
   },
-  selectionToolDangerLabel: {
-    color: '#1E1E1E',
+  selectionStepper: {
+    height: 46,
+    minWidth: 92,
+    borderRadius: 16,
+    backgroundColor: '#F7F0EA',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 3,
+  },
+  selectionStepperSide: {
+    width: 28,
+    height: 40,
+    borderRadius: 13,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  selectionStepperIcon: {
+    color: theme.colors.purple,
+    fontSize: 18,
+    fontWeight: '900',
+  },
+  selectionStepperLabel: {
+    color: theme.colors.textMuted,
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  selectionMoveButton: {
+    height: 46,
+    minWidth: 52,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+  },
+  selectionMoveButtonActive: {
+    backgroundColor: theme.colors.purple,
+  },
+  selectionMoveText: {
+    color: theme.colors.purple,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  selectionMoveTextActive: {
+    color: '#FFFFFF',
+  },
+  movePopupDismissLayer: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 1000,
+  },
+  movePagePopup: {
+    position: 'absolute',
+    left: 18,
+    right: 18,
+    minHeight: 50,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255, 253, 248, 0.98)',
+    borderWidth: 1,
+    borderColor: theme.colors.line,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 6,
+    shadowColor: '#7D695C',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.13,
+    shadowRadius: 16,
+    elevation: 10,
+    zIndex: 1200,
+  },
+  movePageButton: {
+    flex: 1,
+    height: 38,
+    borderRadius: 13,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginHorizontal: 2,
+    backgroundColor: '#F7F0EA',
+  },
+  movePageButtonDisabled: {
+    backgroundColor: '#ECE6DF',
+    opacity: 0.58,
+  },
+  movePageButtonText: {
+    color: theme.colors.purple,
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  movePageButtonTextDisabled: {
+    color: theme.colors.textMuted,
+  },
+  moveNotice: {
+    position: 'absolute',
+    alignSelf: 'center',
+    borderRadius: 16,
+    backgroundColor: 'rgba(30, 30, 30, 0.88)',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    zIndex: 1300,
+  },
+  moveNoticeText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '900',
   },
   modalOverlay: {
     flex: 1,

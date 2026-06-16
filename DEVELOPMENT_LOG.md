@@ -1167,3 +1167,15 @@
 - `components/BookCover/*`
 - `lib/storage.ts`
 - `DEVELOPMENT_LOG.md`
+
+### 2026-06-16 JST
+
+作業:
+- 選択中Dockを `[✓] [− Size ＋] [↺ Turn ↻] [Move] [Peel/Delete]` のステッパー風UIへ変更。
+- Moveタップ時にDockの上へページ選択ポップアップを表示し、現在ページを無効化。
+- Page 1-5から移動先を選ぶと、画面は現在ページのまま、対象だけ指定ページへ移動するよう変更。
+- 既存の端ドラッグによる隣ページ移動と左右端ターゲット表示を削除。
+
+ファイル:
+- `app/(app)/book-detail.tsx`
+- `DEVELOPMENT_LOG.md`
