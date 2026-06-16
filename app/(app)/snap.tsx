@@ -32,35 +32,10 @@ import {
   STICKER_FRAME_COLORS,
   StickerFrameMode,
 } from '../../lib/stickerFrames';
+import { getStickerFrameHeartPath, getStickerFrameStarPath } from '../../lib/stickerFrameShapes';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const TAB_BAR_HEIGHT = 80;
-
-function getSnapStarPath(size: number, outerRadius: number, innerRadius: number): string {
-  const center = size / 2;
-  const points: string[] = [];
-
-  for (let index = 0; index < 10; index += 1) {
-    const angle = -Math.PI / 2 + (index * Math.PI) / 5;
-    const radius = index % 2 === 0 ? outerRadius : innerRadius;
-    const x = center + Math.cos(angle) * radius;
-    const y = center + Math.sin(angle) * radius;
-    points.push(`${index === 0 ? 'M' : 'L'}${x.toFixed(1)} ${y.toFixed(1)}`);
-  }
-
-  return `${points.join(' ')} Z`;
-}
-
-function getSnapHeartPath(size: number): string {
-  return [
-    `M ${size / 2} ${size * 0.91}`,
-    `C ${size * 0.14} ${size * 0.68}, ${size * 0.04} ${size * 0.43}, ${size * 0.16} ${size * 0.24}`,
-    `C ${size * 0.28} ${size * 0.04}, ${size * 0.43} ${size * 0.12}, ${size / 2} ${size * 0.27}`,
-    `C ${size * 0.57} ${size * 0.12}, ${size * 0.72} ${size * 0.04}, ${size * 0.84} ${size * 0.24}`,
-    `C ${size * 0.96} ${size * 0.43}, ${size * 0.86} ${size * 0.68}, ${size / 2} ${size * 0.91}`,
-    'Z',
-  ].join(' ');
-}
 
 export default function SnapScreen() {
   const { user } = useAuth();
@@ -409,8 +384,8 @@ export default function SnapScreen() {
               <Path
                 d={
                   selectedFrameMode === 'heart'
-                    ? getSnapHeartPath(captureWidth)
-                    : getSnapStarPath(captureWidth, captureWidth * 0.48, captureWidth * 0.24)
+                    ? getStickerFrameHeartPath(captureWidth)
+                    : getStickerFrameStarPath(captureWidth, captureWidth * 0.48, captureWidth * 0.24)
                 }
                 fill="rgba(255, 255, 255, 0.08)"
                 stroke={selectedFrameColor}

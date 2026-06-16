@@ -1,5 +1,6 @@
 import type { Sticker, StickerMetadata } from './storage';
 import type { StickerFrameMode } from './stickerFrames';
+import { isPointInsideStickerFrameHeart } from './stickerFrameShapes';
 
 export const STICKER_ALPHA_MASK_SIZE = 64;
 export const STICKER_ALPHA_MASK_ENCODING = 'hex-1bit' as const;
@@ -64,15 +65,6 @@ function createStarPolygon() {
   });
 }
 
-function isInsideHeart(x: number, y: number): boolean {
-  const normalizedX = (x - 0.5) / 0.43;
-  const normalizedY = (0.54 - y) / 0.43;
-  const equation =
-    Math.pow(normalizedX * normalizedX + normalizedY * normalizedY - 1, 3) -
-    normalizedX * normalizedX * Math.pow(normalizedY, 3);
-  return equation <= 0 && y >= 0.08 && y <= 0.92;
-}
-
 export function createFrameAlphaMask(
   mode: Exclude<StickerFrameMode, 'cutout'>
 ): StickerAlphaMask {
@@ -82,7 +74,7 @@ export function createFrameAlphaMask(
     const x = (maskX + 0.5) / STICKER_ALPHA_MASK_SIZE;
     const y = (maskY + 0.5) / STICKER_ALPHA_MASK_SIZE;
 
-    if (mode === 'heart') return isInsideHeart(x, y);
+    if (mode === 'heart') return isPointInsideStickerFrameHeart(x, y);
     if (mode === 'star') return isPointInPolygon(x, y, starPolygon);
 
     const radiusX = 132 / 1024;

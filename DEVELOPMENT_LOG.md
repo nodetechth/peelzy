@@ -1212,3 +1212,21 @@
 - `lib/storage.ts`
 - `supabase/migrations/20260616103036_add_collection_delta_sync.sql`
 - `DEVELOPMENT_LOG.md`
+
+### 2026-06-16 19:46 JST
+
+作業:
+- 写真撮影時と切り抜き保存時のハートフレーム形状を共通ヘルパーに統一。
+- ハートフレームを左右対称で丸みのあるベジェ曲線に調整。
+- ハートフレームのタップ判定用alpha maskも同じハート形状ベースへ変更。
+
+検証:
+- `./node_modules/.bin/tsc --noEmit --pretty false`
+- `git diff --check`
+
+ファイル:
+- `app/(app)/snap.tsx`
+- `app/(app)/crop.tsx`
+- `lib/stickerAlphaMask.ts`
+- `lib/stickerFrameShapes.ts`
+- `DEVELOPMENT_LOG.md`
