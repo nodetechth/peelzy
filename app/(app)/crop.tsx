@@ -632,6 +632,7 @@ export default function CropScreen() {
   const [showBookSelector, setShowBookSelector] = useState(false);
   const [books, setBooks] = useState<Book[]>([]);
   const [loadingBooks, setLoadingBooks] = useState(false);
+  const [selectedBookForPlacement, setSelectedBookForPlacement] = useState<Book | null>(null);
   const [showNewBookInput, setShowNewBookInput] = useState(false);
   const [newBookName, setNewBookName] = useState('');
   const [savingToBook, setSavingToBook] = useState(false);
@@ -669,6 +670,7 @@ export default function CropScreen() {
     setDropAnimationReady(false);
     setErrorMessage(null);
     setShowBookSelector(false);
+    setSelectedBookForPlacement(null);
     setShowNewBookInput(false);
     setNewBookName('');
     setSavingToBook(false);
@@ -995,17 +997,25 @@ export default function CropScreen() {
     fetchBooks();
   };
 
-  const handleSelectBook = async (selectedBookId: string) => {
+  const handleSelectBook = (selectedBook: Book) => {
+    setSelectedBookForPlacement(selectedBook);
+  };
+
+  const handleSelectBookPage = async (selectedBook: Book, selectedPageIndex: number) => {
     if (!sticker) return;
 
     setSavingToBook(true);
+    const posX = randomBetween(0.2, 0.8);
+    const posY = randomBetween(0.2, 0.8);
+    const rotation = randomBetween(-15, 15);
+
     const { error } = await placeStickerInBook(
       sticker.id,
-      selectedBookId,
-      0,
-      randomBetween(0.2, 0.8),
-      randomBetween(0.2, 0.8),
-      randomBetween(-15, 15)
+      selectedBook.id,
+      selectedPageIndex,
+      posX,
+      posY,
+      rotation
     );
 
     setSavingToBook(false);
@@ -1017,46 +1027,42 @@ export default function CropScreen() {
 
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     setShowBookSelector(false);
-    router.replace('/(app)/home');
+    setSelectedBookForPlacement(null);
+    setShowNewBookInput(false);
+    setNewBookName('');
+    router.replace({
+      pathname: '/(app)/book-detail',
+      params: {
+        bookId: selectedBook.id,
+        bookName: selectedBook.name,
+        pageIndex: String(selectedPageIndex),
+        placedStickerId: sticker.id,
+        refresh: String(Date.now()),
+      },
+    });
   };
 
   const handleCreateNewBook = async () => {
-    if (!newBookName.trim() || !sticker) return;
+    if (!newBookName.trim()) return;
 
     setSavingToBook(true);
     const { book: newBook, error: createError } = await createBook(newBookName.trim());
+    setSavingToBook(false);
 
     if (createError || !newBook) {
       console.error('Error creating book:', createError);
-      setSavingToBook(false);
       return;
     }
 
-    const { error: updateError } = await placeStickerInBook(
-      sticker.id,
-      newBook.id,
-      0,
-      randomBetween(0.2, 0.8),
-      randomBetween(0.2, 0.8),
-      randomBetween(-15, 15)
-    );
-
-    setSavingToBook(false);
-
-    if (updateError) {
-      console.error('Error updating sticker book:', updateError);
-      return;
-    }
-
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    setShowBookSelector(false);
     setShowNewBookInput(false);
     setNewBookName('');
-    router.replace('/(app)/home');
+    setBooks((current) => [newBook, ...current]);
+    setSelectedBookForPlacement(newBook);
   };
 
   const handleSkipBookSelection = () => {
     setShowBookSelector(false);
+    setSelectedBookForPlacement(null);
     router.replace('/(app)/home');
   };
 
@@ -1079,8 +1085,10 @@ export default function CropScreen() {
       router.replace({ pathname: '/(app)/collection', params: { bookId } });
       return;
     }
-    // Otherwise, show book selector if books exist
-    if (sticker && books.length > 0) {
+    // Otherwise, show book selector. It also allows creating the first book.
+    if (sticker) {
+      setSelectedBookForPlacement(null);
+      setShowNewBookInput(false);
       setShowBookSelector(true);
     } else {
       router.replace('/(app)/home');
@@ -1237,7 +1245,10 @@ export default function CropScreen() {
         visible={showBookSelector}
         transparent
         animationType="slide"
-        onRequestClose={() => setShowBookSelector(false)}
+        onRequestClose={() => {
+          setShowBookSelector(false);
+          setSelectedBookForPlacement(null);
+        }}
       >
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -1248,13 +1259,52 @@ export default function CropScreen() {
               <View style={styles.dragHandle} />
             </View>
 
-            <Text style={styles.bookSelectorTitle}>Add to Book</Text>
+            <View style={styles.bookSelectorHeaderRow}>
+              <Text style={styles.bookSelectorTitle}>
+                {selectedBookForPlacement ? 'Select Page' : 'Add to Book'}
+              </Text>
+              <TouchableOpacity
+                style={styles.bookSelectorHeaderButton}
+                onPress={() => {
+                  if (selectedBookForPlacement) {
+                    setSelectedBookForPlacement(null);
+                    return;
+                  }
+                  setShowBookSelector(false);
+                }}
+              >
+                <Text style={styles.bookSelectorHeaderButtonText}>
+                  {selectedBookForPlacement ? '←' : '✕'}
+                </Text>
+              </TouchableOpacity>
+            </View>
             <Text style={styles.bookSelectorSubtitle}>
-              Choose a book for this sticker
+              {selectedBookForPlacement
+                ? `Choose a page in "${selectedBookForPlacement.name}"`
+                : 'Choose a book for this sticker'}
             </Text>
 
             {loadingBooks ? (
               <ActivityIndicator color="#fff" style={{ marginTop: 24 }} />
+            ) : selectedBookForPlacement ? (
+              <View style={styles.pageSelector}>
+                <View style={styles.pageButtons}>
+                  {[0, 1, 2, 3, 4].map((targetPageIndex) => (
+                    <TouchableOpacity
+                      key={targetPageIndex}
+                      style={styles.pageButton}
+                      onPress={() => handleSelectBookPage(selectedBookForPlacement, targetPageIndex)}
+                      disabled={savingToBook}
+                    >
+                      {savingToBook ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : (
+                        <Text style={styles.pageButtonText}>{targetPageIndex + 1}</Text>
+                      )}
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
             ) : showNewBookInput ? (
               <View style={styles.newBookInputContainer}>
                 <TextInput
@@ -1302,7 +1352,7 @@ export default function CropScreen() {
                   renderItem={({ item }) => (
                     <TouchableOpacity
                       style={styles.bookItem}
-                      onPress={() => handleSelectBook(item.id)}
+                      onPress={() => handleSelectBook(item)}
                       disabled={savingToBook}
                     >
                       <View
@@ -1650,7 +1700,25 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#fff',
     textAlign: 'center',
-    marginTop: 8,
+    flex: 1,
+    marginLeft: 48,
+  },
+  bookSelectorHeaderRow: {
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+  },
+  bookSelectorHeaderButton: {
+    width: 48,
+    height: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  bookSelectorHeaderButtonText: {
+    color: '#A78BFA',
+    fontSize: 22,
+    fontWeight: '800',
   },
   bookSelectorSubtitle: {
     fontSize: 14,
@@ -1662,6 +1730,29 @@ const styles = StyleSheet.create({
   bookList: {
     maxHeight: 300,
     paddingHorizontal: 16,
+  },
+  pageSelector: {
+    paddingHorizontal: 20,
+    paddingTop: 18,
+    paddingBottom: 28,
+  },
+  pageButtons: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 12,
+  },
+  pageButton: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: '#A78BFA',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  pageButtonText: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '800',
   },
   bookItem: {
     flexDirection: 'row',

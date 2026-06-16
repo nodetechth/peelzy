@@ -1264,3 +1264,19 @@
 ファイル:
 - `app/(app)/crop.tsx`
 - `DEVELOPMENT_LOG.md`
+
+### 2026-06-16 20:28 JST
+
+作業:
+- 写真撮影後のシール化完了から`Add to Book`する際、Book選択後にPage 1-5を選べるよう変更。
+- 新規Book作成時も、作成後すぐPage選択へ進むよう変更。
+- Bookが0冊の状態でも、`Add to Book`から新規Book作成へ進めるよう変更。
+- Add to Book完了後はHomeではなく対象Bookの対象ページへ遷移し、`refresh`付きでBook詳細を強制更新するよう変更。
+
+検証:
+- `./node_modules/.bin/tsc --noEmit --pretty false`
+- `git diff --check`
+
+ファイル:
+- `app/(app)/crop.tsx`
+- `DEVELOPMENT_LOG.md`
