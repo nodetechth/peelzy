@@ -1280,3 +1280,24 @@
 ファイル:
 - `app/(app)/crop.tsx`
 - `DEVELOPMENT_LOG.md`
+
+### 2026-06-16 21:02 JST
+
+作業:
+- 起動直後の空白感を減らすため、Peelzyロゴとキラキラの静止スプラッシュ画像を生成。
+- `expo-splash-screen`を追加し、ネイティブスプラッシュをJS初期化まで保持するよう変更。
+- フォント/Auth/オンボーディング確認中のJS待機画面を、Peelzyロゴのキラキラアニメーション画面へ変更。
+
+検証:
+- `npx expo config --type public --json`
+- `./node_modules/.bin/tsc --noEmit --pretty false`
+- `git diff --check`
+
+ファイル:
+- `app.json`
+- `app/_layout.tsx`
+- `assets/splash-icon.png`
+- `components/LaunchSplash.tsx`
+- `package.json`
+- `package-lock.json`
+- `DEVELOPMENT_LOG.md`

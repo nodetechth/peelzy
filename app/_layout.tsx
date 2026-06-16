@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, DeviceEventEmitter, Text, TextInput, View } from 'react-native';
+import { DeviceEventEmitter, Text, TextInput } from 'react-native';
 import { Slot, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useFonts } from 'expo-font';
+import * as SplashScreen from 'expo-splash-screen';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   Nunito_400Regular,
@@ -20,14 +21,20 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { AuthProvider, useAuth } from '../contexts/AuthContext';
 import { theme } from '../constants/theme';
 import { ONBOARDING_COMPLETED_EVENT, ONBOARDING_STORAGE_KEY } from '../constants/onboarding';
+import LaunchSplash from '../components/LaunchSplash';
 
 let didApplyDefaultFonts = false;
+
+SplashScreen.preventAutoHideAsync().catch(() => {
+  // The splash screen may already be hidden in dev reloads.
+});
 
 function RootLayoutNav() {
   const { session, loading, passwordRecoveryMode } = useAuth();
   const segments = useSegments();
   const router = useRouter();
   const [onboardingComplete, setOnboardingComplete] = useState<boolean | null>(null);
+  const [launchSplashComplete, setLaunchSplashComplete] = useState(false);
 
   useEffect(() => {
     AsyncStorage.getItem(ONBOARDING_STORAGE_KEY)
@@ -41,6 +48,18 @@ function RootLayoutNav() {
     });
 
     return () => subscription.remove();
+  }, []);
+
+  useEffect(() => {
+    SplashScreen.hideAsync().catch(() => {
+      // The native splash can already be hidden when Fast Refresh runs.
+    });
+
+    const timer = setTimeout(() => {
+      setLaunchSplashComplete(true);
+    }, 1350);
+
+    return () => clearTimeout(timer);
   }, []);
 
   useEffect(() => {
@@ -62,13 +81,8 @@ function RootLayoutNav() {
     }
   }, [session, loading, onboardingComplete, passwordRecoveryMode, segments]);
 
-  if (loading || onboardingComplete === null) {
-    return (
-      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.background }}>
-        <StatusBar style="auto" />
-        <ActivityIndicator color={theme.colors.purple} />
-      </View>
-    );
+  if (loading || onboardingComplete === null || !launchSplashComplete) {
+    return <LaunchSplash />;
   }
 
   return (
@@ -111,10 +125,7 @@ export default function RootLayout() {
   if (!fontsLoaded) {
     return (
       <GestureHandlerRootView style={{ flex: 1 }}>
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.background }}>
-          <StatusBar style="auto" />
-          <ActivityIndicator color={theme.colors.purple} />
-        </View>
+        <LaunchSplash />
       </GestureHandlerRootView>
     );
   }
