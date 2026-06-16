@@ -1230,3 +1230,15 @@
 - `lib/stickerAlphaMask.ts`
 - `lib/stickerFrameShapes.ts`
 - `DEVELOPMENT_LOG.md`
+
+### 2026-06-16 19:54 JST
+
+作業:
+- 撮影画面の`Dark / Auto / Bright`明るさ切り替えを削除。
+- フラッシュ切り替えは既存のまま維持。
+- タップフォーカスを連続タップでも再トリガーしやすいよう、タップごとにautofocusを再設定する処理へ整理。
+- シャッターボタン位置を維持するため、削除した明るさボタン部分は空きスペースに変更。
+
+ファイル:
+- `app/(app)/snap.tsx`
+- `DEVELOPMENT_LOG.md`

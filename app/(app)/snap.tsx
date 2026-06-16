@@ -44,7 +44,6 @@ export default function SnapScreen() {
   const [isCameraReady, setIsCameraReady] = useState(false);
   const [cameraFacing, setCameraFacing] = useState<CameraType>('back');
   const [flashMode, setFlashMode] = useState<FlashMode>('off');
-  const [exposureCompensation, setExposureCompensation] = useState(0);
   const [focusMode, setFocusMode] = useState<FocusMode>('off');
   const [focusPoint, setFocusPoint] = useState<{ x: number; y: number } | null>(null);
   const [cameraMountError, setCameraMountError] = useState<string | null>(null);
@@ -53,6 +52,7 @@ export default function SnapScreen() {
   const [selectedFrameColor, setSelectedFrameColor] = useState(DEFAULT_STICKER_FRAME_COLOR);
   const [showPlusFrameSheet, setShowPlusFrameSheet] = useState(false);
   const cameraRef = useRef<CameraView>(null);
+  const focusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const isFocused = useIsFocused();
@@ -202,29 +202,33 @@ export default function SnapScreen() {
     setFlashMode((current) => (current === 'off' ? 'on' : 'off'));
   }, [cameraFacing, isCapturing]);
 
-  const handleCycleExposure = useCallback(() => {
-    if (isCapturing) return;
-    Haptics.selectionAsync();
-    setExposureCompensation((current) => {
-      if (current < -0.1) return 0;
-      if (current < 0.1) return 1;
-      return -1;
-    });
-  }, [isCapturing]);
-
   const handleFocusPress = useCallback((event: GestureResponderEvent) => {
     if (isCapturing) return;
 
     const { locationX, locationY } = event.nativeEvent;
+    if (focusTimeoutRef.current) {
+      clearTimeout(focusTimeoutRef.current);
+    }
+
     setFocusPoint({ x: locationX, y: locationY });
-    setFocusMode('on');
+    setFocusMode('off');
+    requestAnimationFrame(() => setFocusMode('on'));
     Haptics.selectionAsync();
 
-    setTimeout(() => {
+    focusTimeoutRef.current = setTimeout(() => {
       setFocusMode('off');
       setFocusPoint(null);
+      focusTimeoutRef.current = null;
     }, 900);
   }, [isCapturing]);
+
+  useEffect(() => {
+    return () => {
+      if (focusTimeoutRef.current) {
+        clearTimeout(focusTimeoutRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!permission?.granted || !isFocused) return;
@@ -323,7 +327,6 @@ export default function SnapScreen() {
         animateShutter
         flash={flashMode}
         autofocus={focusMode}
-        {...({ exposureCompensation } as any)}
         onCameraReady={() => {
           setCameraMountError(null);
           setIsCameraReady(true);
@@ -339,17 +342,6 @@ export default function SnapScreen() {
         onPress={handleFocusPress}
         disabled={isCapturing || !isCameraReady}
       />
-
-      {exposureCompensation !== 0 && (
-        <View
-          pointerEvents="none"
-          style={[
-            styles.brightnessOverlay,
-            exposureCompensation > 0 ? styles.brightnessOverlayLight : styles.brightnessOverlayDark,
-            { opacity: Math.min(0.22, Math.abs(exposureCompensation) * 0.16) },
-          ]}
-        />
-      )}
 
       <View pointerEvents="none" style={styles.viewfinderMask}>
         {isFramedMode ? (
@@ -506,18 +498,7 @@ export default function SnapScreen() {
       </TouchableOpacity>
 
       <View style={[styles.bottomControls, { top: lowerControlsTop }]}>
-        <TouchableOpacity
-          style={[styles.secondaryControl, isCapturing && styles.controlDisabled]}
-          onPress={handleCycleExposure}
-          disabled={isCapturing}
-          accessibilityRole="button"
-          accessibilityLabel="Adjust brightness"
-        >
-          <Text style={styles.secondaryControlIcon}>☼</Text>
-          <Text style={styles.secondaryControlText}>
-            {exposureCompensation < -0.1 ? 'Dark' : exposureCompensation > 0.1 ? 'Bright' : 'Auto'}
-          </Text>
-        </TouchableOpacity>
+        <View style={styles.secondaryControlPlaceholder} />
 
         <TouchableOpacity
           style={[styles.shutterButton, (!isCameraReady || isCapturing) && styles.controlDisabled]}
@@ -652,16 +633,6 @@ const styles = StyleSheet.create({
   focusLayer: {
     ...StyleSheet.absoluteFillObject,
     zIndex: 1,
-  },
-  brightnessOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    zIndex: 1,
-  },
-  brightnessOverlayLight: {
-    backgroundColor: '#FFFFFF',
-  },
-  brightnessOverlayDark: {
-    backgroundColor: '#000000',
   },
   viewfinderMask: {
     ...StyleSheet.absoluteFillObject,
@@ -893,6 +864,10 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255, 255, 255, 0.28)',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  secondaryControlPlaceholder: {
+    width: 70,
+    height: 52,
   },
   secondaryControlActive: {
     backgroundColor: 'rgba(167, 139, 250, 0.82)',
