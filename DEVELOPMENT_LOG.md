@@ -1242,3 +1242,14 @@
 ファイル:
 - `app/(app)/snap.tsx`
 - `DEVELOPMENT_LOG.md`
+
+### 2026-06-16 19:59 JST
+
+作業:
+- 交換オファーの有効期限が24時間であることを確認。
+- CollectionのOffers一覧に、アクティブなオファーの残り時間と期限切れ表示を追加。
+- Offers表示中に残り時間が1分ごとに更新されるように変更。
+
+ファイル:
+- `app/(app)/collection.tsx`
+- `DEVELOPMENT_LOG.md`

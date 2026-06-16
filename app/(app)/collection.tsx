@@ -64,6 +64,7 @@ const GRID_ROW_HEIGHT = CARD_SIZE + GRID_GAP;
 type TabType = 'all' | 'unplaced' | 'offers';
 
 const SYNC_OVERLAP_MS = 5000;
+const OFFER_EXPIRY_REFRESH_MS = 60 * 1000;
 
 const getGridItemLayout = (_: ArrayLike<Sticker> | null | undefined, index: number) => ({
   length: GRID_ROW_HEIGHT,
@@ -81,6 +82,23 @@ function getDeltaSinceTimestamp(value: string) {
   const time = new Date(value).getTime();
   if (!Number.isFinite(time)) return value;
   return new Date(Math.max(0, time - SYNC_OVERLAP_MS)).toISOString();
+}
+
+function formatOfferExpiry(expiresAt: string, nowMs: number) {
+  const expiresAtMs = new Date(expiresAt).getTime();
+  if (!Number.isFinite(expiresAtMs)) return 'Expiry unavailable';
+
+  const remainingMs = expiresAtMs - nowMs;
+  if (remainingMs <= 0) return 'Expired';
+
+  const remainingMinutes = Math.ceil(remainingMs / (60 * 1000));
+  if (remainingMinutes < 60) {
+    return remainingMinutes <= 1 ? 'Expires in <1m' : `Expires in ${remainingMinutes}m`;
+  }
+
+  const hours = Math.floor(remainingMinutes / 60);
+  const minutes = remainingMinutes % 60;
+  return minutes === 0 ? `Expires in ${hours}h` : `Expires in ${hours}h ${minutes}m`;
 }
 
 function mergeStickerDelta(
@@ -161,6 +179,7 @@ export default function CollectionScreen() {
   const [offersLoaded, setOffersLoaded] = useState(false);
   const [lastStickerSyncAt, setLastStickerSyncAt] = useState<string | null>(null);
   const [expandedOfferId, setExpandedOfferId] = useState<string | null>(null);
+  const [nowMs, setNowMs] = useState(() => Date.now());
 
   const [selectedSticker, setSelectedSticker] = useState<Sticker | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -204,13 +223,21 @@ export default function CollectionScreen() {
   const activeOfferByStickerId = useMemo(() => {
     const map = new Map<string, ExchangeOffer>();
     exchangeOffers.forEach((offer) => {
-      const isActive = offer.status === 'active' && new Date(offer.expires_at).getTime() > Date.now();
+      const isActive = offer.status === 'active' && new Date(offer.expires_at).getTime() > nowMs;
       if (isActive) {
         map.set(offer.sticker_id, offer);
       }
     });
     return map;
-  }, [exchangeOffers]);
+  }, [exchangeOffers, nowMs]);
+
+  useEffect(() => {
+    if (activeTab !== 'offers') return;
+
+    setNowMs(Date.now());
+    const intervalId = setInterval(() => setNowMs(Date.now()), OFFER_EXPIRY_REFRESH_MS);
+    return () => clearInterval(intervalId);
+  }, [activeTab]);
 
   useEffect(() => {
     if (selectedSticker) {
@@ -971,7 +998,7 @@ export default function CollectionScreen() {
 
   const renderOfferStatus = (offer: ExchangeOffer) => {
     if (offer.status === 'active') {
-      return new Date(offer.expires_at).getTime() <= Date.now() ? 'expired' : 'active';
+      return new Date(offer.expires_at).getTime() <= nowMs ? 'expired' : 'active';
     }
 
     return offer.status;
@@ -980,6 +1007,9 @@ export default function CollectionScreen() {
   const renderOfferItem = ({ item }: { item: ExchangeOffer }) => {
     const status = renderOfferStatus(item);
     const isActive = status === 'active';
+    const expiryText = status === 'active' || status === 'expired'
+      ? formatOfferExpiry(item.expires_at, nowMs)
+      : null;
     const pendingCount = item.proposals?.filter((proposal) => proposal.status === 'pending').length ?? 0;
     const isExpanded = expandedOfferId === item.id;
 
@@ -1009,6 +1039,11 @@ export default function CollectionScreen() {
                 {status}
               </Text>
             </View>
+            {expiryText && (
+              <Text style={[styles.offerExpiryText, !isActive && styles.offerExpiryTextInactive]}>
+                {expiryText}
+              </Text>
+            )}
             <Text style={styles.offerSubtext}>
               {pendingCount} offer{pendingCount === 1 ? '' : 's'} received →
             </Text>
@@ -1851,6 +1886,15 @@ const styles = StyleSheet.create({
   },
   statusPillTextInactive: {
     color: theme.colors.textMuted,
+  },
+  offerExpiryText: {
+    color: theme.colors.textMuted,
+    fontSize: 12,
+    fontWeight: '800',
+    marginTop: 6,
+  },
+  offerExpiryTextInactive: {
+    color: '#A5948A',
   },
   offerSubtext: {
     color: theme.colors.purple,
