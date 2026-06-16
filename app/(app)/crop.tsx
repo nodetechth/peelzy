@@ -197,9 +197,10 @@ function PeelingAnimation({ imageUrl }: { imageUrl: string }) {
 type DropAnimationProps = {
   stickerUrl: string;
   onLanded: () => void;
+  onReady?: () => void;
 };
 
-function DropAnimation({ stickerUrl, onLanded }: DropAnimationProps) {
+function DropAnimation({ stickerUrl, onLanded, onReady }: DropAnimationProps) {
   const translateY = useRef(new Animated.Value(28)).current;
   const scale = useRef(new Animated.Value(0.92)).current;
   const rotate = useRef(new Animated.Value(-4)).current;
@@ -362,9 +363,10 @@ function DropAnimation({ stickerUrl, onLanded }: DropAnimationProps) {
 
   useEffect(() => {
     if (imageLoaded) {
-      startAnimation();
+      onReady?.();
+      requestAnimationFrame(() => startAnimation());
     }
-  }, [imageLoaded]);
+  }, [imageLoaded, onReady]);
 
   const rotateInterpolate = rotate.interpolate({
     inputRange: [-6, 0, 2],
@@ -624,6 +626,7 @@ export default function CropScreen() {
   const [stickerUrl, setStickerUrl] = useState<string | null>(null);
   const [sticker, setSticker] = useState<Sticker | null>(null);
   const [animationComplete, setAnimationComplete] = useState(false);
+  const [dropAnimationReady, setDropAnimationReady] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const [showBookSelector, setShowBookSelector] = useState(false);
@@ -663,6 +666,7 @@ export default function CropScreen() {
     setStickerUrl(null);
     setSticker(null);
     setAnimationComplete(false);
+    setDropAnimationReady(false);
     setErrorMessage(null);
     setShowBookSelector(false);
     setShowNewBookInput(false);
@@ -779,6 +783,7 @@ export default function CropScreen() {
     const totalStartedAt = Date.now();
     const timings: ProcessingTimings = {};
 
+    setDropAnimationReady(false);
     setProcessingState(isFramedSticker ? 'preparing-frame' : 'removing-bg');
     setErrorMessage(null);
 
@@ -1111,6 +1116,8 @@ export default function CropScreen() {
     processingState === 'preparing-frame' ||
     processingState === 'removing-bg' ||
     processingState === 'uploading';
+  const showProcessingAnimation =
+    isProcessing || (processingState === 'done' && !!stickerUrl && !dropAnimationReady);
 
   return (
     <View style={styles.container}>
@@ -1146,31 +1153,31 @@ export default function CropScreen() {
           </View>
         )}
 
-        {isProcessing && imageUrl && (
-          <View style={styles.processingContainer}>
-            <PeelingAnimation imageUrl={imageUrl} />
-            <View style={styles.processingStatusCard}>
-              <View style={styles.processingStatusRow}>
-                <ActivityIndicator size="small" color="#A78BFA" />
-                <Text style={styles.processingText}>{getStatusText()}</Text>
-              </View>
-              <Text style={styles.processingElapsedText}>
-                {processingElapsedSeconds}s
-              </Text>
-              {processingElapsedSeconds >= 15 && (
-                <Text style={styles.processingLongText}>
-                  Still working. Keep Peelzy open.
-                </Text>
-              )}
-            </View>
-          </View>
-        )}
-
         {processingState === 'done' && stickerUrl && (
           <DropAnimation
             stickerUrl={stickerUrl}
             onLanded={handleAnimationLanded}
+            onReady={() => setDropAnimationReady(true)}
           />
+        )}
+
+        {showProcessingAnimation && imageUrl && (
+          <View style={styles.processingContainer}>
+            <PeelingAnimation imageUrl={imageUrl} />
+            {isProcessing && (
+              <View style={styles.processingStatusCard}>
+                <View style={styles.processingStatusRow}>
+                  <ActivityIndicator size="small" color="#A78BFA" />
+                  <Text style={styles.processingText}>{getStatusText()}</Text>
+                </View>
+                {processingElapsedSeconds >= 15 && (
+                  <Text style={styles.processingLongText}>
+                    Still working. Keep Peelzy open.
+                  </Text>
+                )}
+              </View>
+            )}
+          </View>
         )}
 
         {processingState === 'error' && (
@@ -1442,12 +1449,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 10,
-  },
-  processingElapsedText: {
-    color: 'rgba(255, 255, 255, 0.55)',
-    fontSize: 13,
-    fontWeight: '700',
-    fontVariant: ['tabular-nums'],
   },
   processingLongText: {
     color: 'rgba(255, 255, 255, 0.72)',
