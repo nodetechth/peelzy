@@ -1301,3 +1301,21 @@
 - `package.json`
 - `package-lock.json`
 - `DEVELOPMENT_LOG.md`
+
+### 2026-06-16 21:08 JST
+
+作業:
+- スプラッシュ画像を指定画像へ差し替え。
+- 画像を高さ1280pxへリサイズし、約744KBまで軽量化。
+- ネイティブ/JSスプラッシュを全画面`cover`表示に変更し、背景色を暗色へ合わせた。
+
+検証:
+- `npx expo config --type public --json`
+- `./node_modules/.bin/tsc --noEmit --pretty false`
+- `git diff --check`
+
+ファイル:
+- `app.json`
+- `assets/splash-icon.png`
+- `components/LaunchSplash.tsx`
+- `DEVELOPMENT_LOG.md`

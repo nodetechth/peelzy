@@ -10,8 +10,8 @@
     "scheme": "peelzy",
     "splash": {
       "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#FDFBF7"
+      "resizeMode": "cover",
+      "backgroundColor": "#111111"
     },
     "ios": {
       "supportsTablet": true,
@@ -66,9 +66,8 @@
         "expo-splash-screen",
         {
           "image": "./assets/splash-icon.png",
-          "imageWidth": 220,
-          "resizeMode": "contain",
-          "backgroundColor": "#FDFBF7"
+          "resizeMode": "cover",
+          "backgroundColor": "#111111"
         }
       ]
     ],
