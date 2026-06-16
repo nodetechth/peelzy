@@ -10,6 +10,10 @@ const STICKER_DISPLAY_COLUMNS =
   'id, user_id, image_url, thumbnail_url, page_index, pos_x, pos_y, rotation, book_id, created_at, metadata';
 const BOOK_PAGE_ELEMENT_DISPLAY_COLUMNS =
   'id, user_id, book_id, page_index, type, content, pos_x, pos_y, rotation, color, style, created_at, updated_at';
+const EXCHANGE_OFFER_DISPLAY_COLUMNS =
+  'id, token, owner_id, sticker_id, status, auto_accept, accepted_proposal_id, expires_at, created_at';
+const EXCHANGE_PROPOSAL_DISPLAY_COLUMNS =
+  'id, offer_id, proposer_id, offered_sticker_id, status, created_at';
 
 function generateUUID(): string {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
@@ -875,7 +879,7 @@ export async function getUnplacedStickers(): Promise<{ stickers: Sticker[]; erro
 
     const { data, error } = await supabase
       .from('stickers')
-      .select('*')
+      .select(STICKER_DISPLAY_COLUMNS)
       .eq('user_id', user.id)
       .is('page_index', null)
       .order('created_at', { ascending: false });
@@ -899,7 +903,7 @@ export async function getAllStickers(): Promise<{ stickers: Sticker[]; error: Er
 
     const { data, error } = await supabase
       .from('stickers')
-      .select('*')
+      .select(STICKER_DISPLAY_COLUMNS)
       .eq('user_id', user.id)
       .order('created_at', { ascending: false });
 
@@ -1404,7 +1408,7 @@ export async function getMyExchangeOffers(): Promise<{ offers: ExchangeOffer[]; 
 
     const { data: offersData, error: offersError } = await supabase
       .from('sticker_exchange_offers')
-      .select('*')
+      .select(EXCHANGE_OFFER_DISPLAY_COLUMNS)
       .eq('owner_id', user.id)
       .order('created_at', { ascending: false });
 
@@ -1420,7 +1424,7 @@ export async function getMyExchangeOffers(): Promise<{ offers: ExchangeOffer[]; 
     const stickerIds = offers.map((offer) => offer.sticker_id);
     const { data: stickersData, error: stickersError } = await supabase
       .from('stickers')
-      .select('*')
+      .select(STICKER_DISPLAY_COLUMNS)
       .in('id', stickerIds);
 
     if (stickersError) {
@@ -1430,7 +1434,7 @@ export async function getMyExchangeOffers(): Promise<{ offers: ExchangeOffer[]; 
     const offerIds = offers.map((offer) => offer.id);
     const { data: proposalsData, error: proposalsError } = await supabase
       .from('sticker_exchange_proposals')
-      .select('*')
+      .select(EXCHANGE_PROPOSAL_DISPLAY_COLUMNS)
       .in('offer_id', offerIds)
       .order('created_at', { ascending: false });
 
@@ -1441,7 +1445,7 @@ export async function getMyExchangeOffers(): Promise<{ offers: ExchangeOffer[]; 
     const proposals = (proposalsData || []) as ExchangeProposal[];
     const proposedStickerIds = proposals.map((proposal) => proposal.offered_sticker_id);
     const { data: proposedStickersData, error: proposedStickersError } = proposedStickerIds.length > 0
-      ? await supabase.from('stickers').select('*').in('id', proposedStickerIds)
+      ? await supabase.from('stickers').select(STICKER_DISPLAY_COLUMNS).in('id', proposedStickerIds)
       : { data: [], error: null };
 
     if (proposedStickersError) {

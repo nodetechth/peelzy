@@ -31,7 +31,6 @@ import {
   getBooks,
   getMyExchangeOffers,
   getStickerOwnerHistory,
-  getUnplacedStickers,
   getStickerDisplayScale,
   getStickerThumbnailUrl,
   deleteExchangeOffer,
@@ -45,6 +44,11 @@ import {
   Sticker,
   StickerOwnerHistoryEntry,
 } from '../../lib/storage';
+import {
+  getCachedCollectionSnapshot,
+  setCachedCollectionSnapshot,
+} from '../../lib/collectionCache';
+import { warmStickerImageCache } from '../../lib/stickerImageCache';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const NUM_COLUMNS = 3;
@@ -111,9 +115,10 @@ export default function CollectionScreen() {
   const [refreshing, setRefreshing] = useState(false);
 
   const [allStickers, setAllStickers] = useState<Sticker[]>([]);
-  const [unplacedStickers, setUnplacedStickers] = useState<Sticker[]>([]);
   const [allBooks, setAllBooks] = useState<Book[]>([]);
   const [exchangeOffers, setExchangeOffers] = useState<ExchangeOffer[]>([]);
+  const [offersLoading, setOffersLoading] = useState(false);
+  const [offersLoaded, setOffersLoaded] = useState(false);
   const [expandedOfferId, setExpandedOfferId] = useState<string | null>(null);
 
   const [selectedSticker, setSelectedSticker] = useState<Sticker | null>(null);
@@ -138,9 +143,18 @@ export default function CollectionScreen() {
   const [showToast, setShowToast] = useState(false);
   const toastOpacity = useRef(new Animated.Value(0)).current;
   const fetchRequestRef = useRef(0);
+  const offersRequestRef = useRef(0);
+  const allStickersRef = useRef<Sticker[]>([]);
+  const allBooksRef = useRef<Book[]>([]);
+  const exchangeOffersRef = useRef<ExchangeOffer[]>([]);
+  const offersLoadedRef = useRef(false);
 
   const translateY = useRef(new Animated.Value(0)).current;
   const translateX = useRef(new Animated.Value(0)).current;
+  const unplacedStickers = useMemo(
+    () => allStickers.filter((sticker) => sticker.page_index === null),
+    [allStickers]
+  );
   const selectedStickerList = useMemo(
     () => (activeTab === 'unplaced' ? unplacedStickers : allStickers),
     [activeTab, allStickers, unplacedStickers]
@@ -163,7 +177,106 @@ export default function CollectionScreen() {
     }
   }, [selectedSticker, translateX, translateY]);
 
-  const fetchData = useCallback(async () => {
+  useEffect(() => {
+    allStickersRef.current = allStickers;
+  }, [allStickers]);
+
+  useEffect(() => {
+    allBooksRef.current = allBooks;
+  }, [allBooks]);
+
+  useEffect(() => {
+    exchangeOffersRef.current = exchangeOffers;
+  }, [exchangeOffers]);
+
+  useEffect(() => {
+    offersLoadedRef.current = offersLoaded;
+  }, [offersLoaded]);
+
+  const warmCollectionImages = useCallback((stickers: Sticker[], offers: ExchangeOffer[] = []) => {
+    warmStickerImageCache([
+      ...stickers.slice(0, 30).map(getStickerThumbnailUrl),
+      ...offers.slice(0, 10).flatMap((offer) => [
+        offer.sticker ? getStickerThumbnailUrl(offer.sticker) : null,
+        ...(offer.proposals || []).slice(0, 4).map((proposal) =>
+          proposal.offered_sticker ? getStickerThumbnailUrl(proposal.offered_sticker) : null
+        ),
+      ]),
+    ]);
+  }, []);
+
+  const cacheCollectionSnapshot = useCallback((snapshot: {
+    stickers?: Sticker[];
+    books?: Book[];
+    exchangeOffers?: ExchangeOffer[];
+    exchangeOffersLoaded?: boolean;
+  }) => {
+    if (!user?.id) return;
+
+    setCachedCollectionSnapshot(user.id, {
+      stickers: snapshot.stickers ?? allStickersRef.current,
+      books: snapshot.books ?? allBooksRef.current,
+      exchangeOffers: snapshot.exchangeOffers ?? exchangeOffersRef.current,
+      exchangeOffersLoaded: snapshot.exchangeOffersLoaded ?? offersLoadedRef.current,
+    });
+  }, [user?.id]);
+
+  useEffect(() => {
+    let isActive = true;
+
+    const hydrate = async () => {
+      if (!user?.id) {
+        setLoading(false);
+        return;
+      }
+
+      const cached = await getCachedCollectionSnapshot(user.id);
+      if (!isActive || !cached) return;
+
+      setAllStickers(cached.stickers);
+      setAllBooks(cached.books);
+      setExchangeOffers(cached.exchangeOffers);
+      setOffersLoaded(cached.exchangeOffersLoaded);
+      setLoading(false);
+      warmCollectionImages(cached.stickers, cached.exchangeOffers);
+    };
+
+    hydrate();
+
+    return () => {
+      isActive = false;
+    };
+  }, [user?.id, warmCollectionImages]);
+
+  const fetchOffers = useCallback(async (): Promise<ExchangeOffer[]> => {
+    if (!user) {
+      return [];
+    }
+
+    const requestId = offersRequestRef.current + 1;
+    offersRequestRef.current = requestId;
+    setOffersLoading(true);
+
+    try {
+      const offersResult = await getMyExchangeOffers();
+      if (offersRequestRef.current !== requestId) return offersResult.offers;
+
+      setExchangeOffers(offersResult.offers);
+      setOffersLoaded(true);
+      warmCollectionImages(allStickersRef.current, offersResult.offers);
+      cacheCollectionSnapshot({ exchangeOffers: offersResult.offers, exchangeOffersLoaded: true });
+      return offersResult.offers;
+    } catch (error) {
+      console.error('Error fetching collection offers:', error);
+      return [];
+    } finally {
+      if (offersRequestRef.current === requestId) {
+        setOffersLoading(false);
+      }
+    }
+  }, [cacheCollectionSnapshot, user, warmCollectionImages]);
+
+  const fetchData = useCallback(async (options?: { includeOffers?: boolean }) => {
     if (!user) {
       setLoading(false);
       setRefreshing(false);
@@ -174,19 +287,24 @@ export default function CollectionScreen() {
     fetchRequestRef.current = requestId;
 
     try {
-      const [allResult, unplacedResult, booksResult, offersResult] = await Promise.all([
+      const [allResult, booksResult] = await Promise.all([
         getAllStickers(),
-        getUnplacedStickers(),
         getBooks(),
-        getMyExchangeOffers(),
       ]);
 
       if (fetchRequestRef.current !== requestId) return;
 
       setAllStickers(allResult.stickers);
-      setUnplacedStickers(unplacedResult.stickers);
       setAllBooks(booksResult.books);
-      setExchangeOffers(offersResult.offers);
+      warmCollectionImages(allResult.stickers, exchangeOffersRef.current);
+      cacheCollectionSnapshot({
+        stickers: allResult.stickers,
+        books: booksResult.books,
+      });
+
+      if (options?.includeOffers) {
+        fetchOffers();
+      }
     } catch (error) {
       console.error('Error fetching collection data:', error);
     } finally {
@@ -195,7 +313,7 @@ export default function CollectionScreen() {
         setRefreshing(false);
       }
     }
-  }, [user]);
+  }, [cacheCollectionSnapshot, fetchOffers, user, warmCollectionImages]);
 
   useFocusEffect(
     useCallback(() => {
@@ -213,10 +331,21 @@ export default function CollectionScreen() {
     }, [fetchData])
   );
 
+  useEffect(() => {
+    const shouldLoadOffers =
+      activeTab === 'unplaced' ||
+      activeTab === 'offers' ||
+      (selectedSticker?.page_index === null && selectedSticker !== null);
+
+    if (shouldLoadOffers && !offersLoaded && !offersLoading) {
+      fetchOffers();
+    }
+  }, [activeTab, fetchOffers, offersLoaded, offersLoading, selectedSticker]);
+
   const handleRefresh = useCallback(() => {
     setRefreshing(true);
-    fetchData();
-  }, [fetchData]);
+    fetchData({ includeOffers: activeTab !== 'all' || offersLoaded });
+  }, [activeTab, fetchData, offersLoaded]);
 
   const showToastMessage = () => {
     setShowToast(true);
@@ -258,7 +387,7 @@ export default function CollectionScreen() {
 
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     setSelectedSticker(null);
-    fetchData();
+    fetchData({ includeOffers: offersLoaded });
   };
 
   const handleDelete = () => {
@@ -287,7 +416,7 @@ export default function CollectionScreen() {
             setSelectedSticker(null);
             setDeleting(false);
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-            fetchData();
+            fetchData({ includeOffers: offersLoaded });
           },
         },
       ]
@@ -373,13 +502,19 @@ export default function CollectionScreen() {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     setSelectedSticker(null);
     shareOfferLink(offer);
-    fetchData();
+    fetchData({ includeOffers: true });
     setActiveTab('offers');
   };
 
   const handleCreateOffer = async () => {
     if (!selectedSticker) return;
-    if (activeOfferByStickerId.has(selectedSticker.id)) {
+    const currentOffers = offersLoaded ? exchangeOffers : await fetchOffers();
+    const hasActiveOffer = currentOffers.some((offer) => {
+      const isActive = offer.status === 'active' && new Date(offer.expires_at).getTime() > Date.now();
+      return isActive && offer.sticker_id === selectedSticker.id;
+    });
+
+    if (hasActiveOffer) {
       showNotice('Already offered', 'This sticker already has an active exchange offer.');
       return;
     }
@@ -422,7 +557,7 @@ export default function CollectionScreen() {
       sent: offer.sticker || null,
       received: proposal.offered_sticker || null,
     });
-    fetchData();
+    fetchData({ includeOffers: true });
   };
 
   const handleRejectProposal = async (proposal: ExchangeProposal) => {
@@ -436,7 +571,7 @@ export default function CollectionScreen() {
     }
 
     Haptics.selectionAsync();
-    fetchData();
+    fetchData({ includeOffers: true });
   };
 
   const handleCancelOffer = async (offer: ExchangeOffer) => {
@@ -447,7 +582,7 @@ export default function CollectionScreen() {
     }
 
     Haptics.selectionAsync();
-    fetchData();
+    fetchData({ includeOffers: true });
   };
 
   const deleteOffer = async (offer: ExchangeOffer) => {
@@ -464,7 +599,7 @@ export default function CollectionScreen() {
     if (expandedOfferId === offer.id) {
       setExpandedOfferId(null);
     }
-    fetchData();
+    fetchData({ includeOffers: true });
   };
 
   const handleDeleteOffer = (offer: ExchangeOffer) => {
@@ -520,7 +655,7 @@ export default function CollectionScreen() {
     setSelectedBookForPlacement(null);
     setSelectedSticker(null);
     showToastMessage();
-    fetchData();
+    fetchData({ includeOffers: offersLoaded });
   };
 
   const formatDate = (dateString: string) => {
@@ -899,7 +1034,11 @@ export default function CollectionScreen() {
       }
       ListEmptyComponent={
         <View style={styles.emptyContainer}>
-          <Text style={styles.emptyText}>No exchange offers yet.</Text>
+          {offersLoading ? (
+            <ActivityIndicator color={theme.colors.purple} />
+          ) : (
+            <Text style={styles.emptyText}>No exchange offers yet.</Text>
+          )}
         </View>
       }
     />

@@ -1179,3 +1179,18 @@
 ファイル:
 - `app/(app)/book-detail.tsx`
 - `DEVELOPMENT_LOG.md`
+
+### 2026-06-16 JST
+
+作業:
+- Collection画面の端末キャッシュを追加し、キャッシュ済みのシール一覧・Book・交換オファーを即表示するよう変更。
+- Collection初期表示から`getUnplacedStickers()`の二重取得を外し、未配置シールは全シール一覧からローカル算出。
+- シール一覧・交換オファー関連のSupabase selectを表示に必要なカラムへ限定。
+- 交換オファーはUnplaced/Offersタブ表示時、または未配置シール詳細表示時に遅延取得するよう変更。
+- 交換オファー0件の取得済み状態をキャッシュし、未取得の空配列と区別。
+
+ファイル:
+- `app/(app)/collection.tsx`
+- `lib/collectionCache.ts`
+- `lib/storage.ts`
+- `DEVELOPMENT_LOG.md`
