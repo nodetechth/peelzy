@@ -47,6 +47,7 @@ import {
   syncRevenueCatStatus,
 } from '../../lib/revenuecat';
 import { warmStickerImageCache } from '../../lib/stickerImageCache';
+import LaunchSplash from '../../components/LaunchSplash';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const CARD_WIDTH = Math.min(340, SCREEN_WIDTH * 0.82);
@@ -417,29 +418,8 @@ export default function HomeScreen() {
     </TouchableOpacity>
   );
 
-  const renderSkeletonCard = () => (
-    <View style={styles.cardTouchable}>
-      <View style={[styles.bookCard, styles.skeletonCard]} />
-    </View>
-  );
-
   if (loading) {
-    return (
-      <SafeAreaView style={styles.container} edges={['top']}>
-        <View style={styles.header}>
-          <View>
-            <Text style={styles.title}>My Books</Text>
-            <Text style={styles.subtitle}>- books · - stickers</Text>
-          </View>
-          <View style={styles.settingsButton}>
-            <Text style={styles.settingsButtonText}>•••</Text>
-          </View>
-        </View>
-        <View style={styles.swipeArea}>
-          {renderSkeletonCard()}
-        </View>
-      </SafeAreaView>
-    );
+    return <LaunchSplash />;
   }
 
   return (
@@ -1016,12 +996,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: theme.colors.textMuted,
     marginTop: 12,
-  },
-  skeletonCard: {
-    width: CARD_WIDTH - 34,
-    height: CARD_HEIGHT - 36,
-    backgroundColor: theme.colors.surfaceSoft,
-    borderRadius: 24,
   },
   modalOverlay: {
     flex: 1,

@@ -1336,3 +1336,18 @@
 - `app/(app)/book-detail.tsx`
 - `components/BookCover/ClassicCover.tsx`
 - `DEVELOPMENT_LOG.md`
+
+### 2026-06-18 00:20 JST
+
+作業:
+- ネイティブ/JSスプラッシュ後にホームの初回スケルトン画面が一瞬表示される問題を修正。
+- ホームの初回データ取得中は同じ`LaunchSplash`を表示し続け、空の`My Books`画面を見せないよう変更。
+- 未使用になったホームのスケルトンカード処理を削除。
+
+検証:
+- `./node_modules/.bin/tsc --noEmit --pretty false`
+- `git diff --check`
+
+ファイル:
+- `app/(app)/home.tsx`
+- `DEVELOPMENT_LOG.md`
