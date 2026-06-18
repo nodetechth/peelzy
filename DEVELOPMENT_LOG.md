@@ -30,6 +30,22 @@
 - `app/(app)/book-detail.tsx`
 - `DEVELOPMENT_LOG.md`
 
+### 2026-06-19 09:45 JST
+
+作業:
+- シール帳詳細の選択中ドックをコンパクト化。
+- Size/Turnを横長ステッパーからボタンに変更し、タップ時にMove同様の上部ポップアップで±/回転操作を表示するようにした。
+- Size/Turn/Moveのポップアップは同時に1つだけ開くよう制御。
+- Stamp/Text選択時の削除ボタンを`×`からゴミ箱表示へ変更。
+
+検証:
+- `./node_modules/.bin/tsc --noEmit --pretty false`
+- `git diff --check`
+
+ファイル:
+- `app/(app)/book-detail.tsx`
+- `DEVELOPMENT_LOG.md`
+
 ### 2026-06-18 12:25 JST
 
 作業:

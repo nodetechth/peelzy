@@ -1579,6 +1579,8 @@ export default function BookDetailScreen() {
   const [clearSelectionNonce, setClearSelectionNonce] = useState(0);
   const [canvasScreenFrame, setCanvasScreenFrame] = useState<CanvasScreenFrame>(null);
   const [showMovePagePopup, setShowMovePagePopup] = useState(false);
+  const [showSizePopup, setShowSizePopup] = useState(false);
+  const [showTurnPopup, setShowTurnPopup] = useState(false);
   const [moveNotice, setMoveNotice] = useState<string | null>(null);
 
   const [showAddSheet, setShowAddSheet] = useState(false);
@@ -1615,6 +1617,8 @@ export default function BookDetailScreen() {
     setSelectedCanvasItemType(null);
     setSelectionAction(null);
     setShowMovePagePopup(false);
+    setShowSizePopup(false);
+    setShowTurnPopup(false);
     setClearSelectionNonce((value) => value + 1);
   }, []);
 
@@ -2392,14 +2396,40 @@ export default function BookDetailScreen() {
     setSelectionAction({ type, targetPage, nonce: Date.now() });
   }, []);
 
+  const closeSelectionPopups = useCallback(() => {
+    setShowMovePagePopup(false);
+    setShowSizePopup(false);
+    setShowTurnPopup(false);
+  }, []);
+
+  useEffect(() => {
+    if (!isStickerSelected) {
+      closeSelectionPopups();
+    }
+  }, [closeSelectionPopups, isStickerSelected]);
+
   const toggleMovePagePopup = useCallback(() => {
+    setShowSizePopup(false);
+    setShowTurnPopup(false);
     setShowMovePagePopup((visible) => !visible);
+  }, []);
+
+  const toggleSizePopup = useCallback(() => {
+    setShowMovePagePopup(false);
+    setShowTurnPopup(false);
+    setShowSizePopup((visible) => !visible);
+  }, []);
+
+  const toggleTurnPopup = useCallback(() => {
+    setShowMovePagePopup(false);
+    setShowSizePopup(false);
+    setShowTurnPopup((visible) => !visible);
   }, []);
 
   const handleMoveToPagePress = useCallback((targetPage: number) => {
     if (targetPage === currentPage) return;
 
-    setShowMovePagePopup(false);
+    closeSelectionPopups();
     setMoveNotice(`Moved to Page ${targetPage + 1}`);
     requestStickerSelectionAction('moveToPage', targetPage);
     Haptics.selectionAsync();
@@ -2407,7 +2437,7 @@ export default function BookDetailScreen() {
     setTimeout(() => {
       setMoveNotice(null);
     }, 1500);
-  }, [currentPage, requestStickerSelectionAction]);
+  }, [closeSelectionPopups, currentPage, requestStickerSelectionAction]);
 
   const renderPageIndicator = () => {
     return (
@@ -2582,11 +2612,11 @@ export default function BookDetailScreen() {
 
       {renderCanvas()}
 
-      {showMovePagePopup && (
+      {(showMovePagePopup || showSizePopup || showTurnPopup) && (
         <TouchableOpacity
           style={styles.movePopupDismissLayer}
           activeOpacity={1}
-          onPress={() => setShowMovePagePopup(false)}
+          onPress={closeSelectionPopups}
         />
       )}
 
@@ -2598,6 +2628,46 @@ export default function BookDetailScreen() {
 
       {isStickerSelected ? (
         <>
+          {showSizePopup && (
+            <View style={[styles.selectionActionPopup, { bottom: TAB_BAR_HEIGHT + insets.bottom + 94 }]}>
+              <TouchableOpacity
+                style={styles.selectionActionPopupButton}
+                onPress={() => requestStickerSelectionAction('scaleDown')}
+                activeOpacity={0.78}
+              >
+                <Text style={styles.selectionActionPopupIcon}>−</Text>
+              </TouchableOpacity>
+              <Text style={styles.selectionActionPopupLabel}>Size</Text>
+              <TouchableOpacity
+                style={styles.selectionActionPopupButton}
+                onPress={() => requestStickerSelectionAction('scaleUp')}
+                activeOpacity={0.78}
+              >
+                <Text style={styles.selectionActionPopupIcon}>＋</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {showTurnPopup && (
+            <View style={[styles.selectionActionPopup, { bottom: TAB_BAR_HEIGHT + insets.bottom + 94 }]}>
+              <TouchableOpacity
+                style={styles.selectionActionPopupButton}
+                onPress={() => requestStickerSelectionAction('rotateLeft')}
+                activeOpacity={0.78}
+              >
+                <Text style={styles.selectionActionPopupIcon}>↺</Text>
+              </TouchableOpacity>
+              <Text style={styles.selectionActionPopupLabel}>Turn</Text>
+              <TouchableOpacity
+                style={styles.selectionActionPopupButton}
+                onPress={() => requestStickerSelectionAction('rotateRight')}
+                activeOpacity={0.78}
+              >
+                <Text style={styles.selectionActionPopupIcon}>↻</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
           {showMovePagePopup && (
             <View style={[styles.movePagePopup, { bottom: TAB_BAR_HEIGHT + insets.bottom + 94 }]}>
               {Array.from({ length: 5 }, (_, page) => {
@@ -2630,25 +2700,19 @@ export default function BookDetailScreen() {
               <Text style={styles.selectionToolIcon}>✓</Text>
             </TouchableOpacity>
 
-            <View style={styles.selectionStepper}>
-              <TouchableOpacity style={styles.selectionStepperSide} onPress={() => requestStickerSelectionAction('scaleDown')}>
-                <Text style={styles.selectionStepperIcon}>−</Text>
-              </TouchableOpacity>
-              <Text style={styles.selectionStepperLabel}>Size</Text>
-              <TouchableOpacity style={styles.selectionStepperSide} onPress={() => requestStickerSelectionAction('scaleUp')}>
-                <Text style={styles.selectionStepperIcon}>＋</Text>
-              </TouchableOpacity>
-            </View>
+            <TouchableOpacity
+              style={[styles.selectionMoveButton, showSizePopup && styles.selectionMoveButtonActive]}
+              onPress={toggleSizePopup}
+            >
+              <Text style={[styles.selectionMoveText, showSizePopup && styles.selectionMoveTextActive]}>Size</Text>
+            </TouchableOpacity>
 
-            <View style={styles.selectionStepper}>
-              <TouchableOpacity style={styles.selectionStepperSide} onPress={() => requestStickerSelectionAction('rotateLeft')}>
-                <Text style={styles.selectionStepperIcon}>↺</Text>
-              </TouchableOpacity>
-              <Text style={styles.selectionStepperLabel}>Turn</Text>
-              <TouchableOpacity style={styles.selectionStepperSide} onPress={() => requestStickerSelectionAction('rotateRight')}>
-                <Text style={styles.selectionStepperIcon}>↻</Text>
-              </TouchableOpacity>
-            </View>
+            <TouchableOpacity
+              style={[styles.selectionMoveButton, showTurnPopup && styles.selectionMoveButtonActive]}
+              onPress={toggleTurnPopup}
+            >
+              <Text style={[styles.selectionMoveText, showTurnPopup && styles.selectionMoveTextActive]}>Turn</Text>
+            </TouchableOpacity>
 
             {selectedCanvasItemType === 'element' && (
               <TouchableOpacity style={styles.selectionIconButton} onPress={() => requestStickerSelectionAction('edit')}>
@@ -2668,7 +2732,7 @@ export default function BookDetailScreen() {
               onPress={() => requestStickerSelectionAction(selectedCanvasItemType === 'element' ? 'delete' : 'peel')}
             >
               <Text style={[styles.selectionToolIcon, styles.selectionToolDangerIcon]}>
-                {selectedCanvasItemType === 'element' ? '×' : '↯'}
+                {selectedCanvasItemType === 'element' ? '🗑' : '↯'}
               </Text>
             </TouchableOpacity>
           </View>
@@ -3557,33 +3621,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '900',
   },
-  selectionStepper: {
-    height: 46,
-    minWidth: 92,
-    borderRadius: 16,
-    backgroundColor: '#F7F0EA',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 3,
-  },
-  selectionStepperSide: {
-    width: 28,
-    height: 40,
-    borderRadius: 13,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  selectionStepperIcon: {
-    color: theme.colors.purple,
-    fontSize: 18,
-    fontWeight: '900',
-  },
-  selectionStepperLabel: {
-    color: theme.colors.textMuted,
-    fontSize: 11,
-    fontWeight: '900',
-  },
   selectionMoveButton: {
     height: 46,
     minWidth: 52,
@@ -3606,6 +3643,45 @@ const styles = StyleSheet.create({
   movePopupDismissLayer: {
     ...StyleSheet.absoluteFillObject,
     zIndex: 1000,
+  },
+  selectionActionPopup: {
+    position: 'absolute',
+    alignSelf: 'center',
+    minWidth: 184,
+    height: 50,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255, 253, 248, 0.98)',
+    borderWidth: 1,
+    borderColor: theme.colors.line,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 6,
+    shadowColor: '#7D695C',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.13,
+    shadowRadius: 16,
+    elevation: 10,
+    zIndex: 1200,
+  },
+  selectionActionPopupButton: {
+    width: 54,
+    height: 38,
+    borderRadius: 13,
+    backgroundColor: '#F7F0EA',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  selectionActionPopupIcon: {
+    color: theme.colors.purple,
+    fontSize: 20,
+    fontWeight: '900',
+  },
+  selectionActionPopupLabel: {
+    color: theme.colors.textMuted,
+    fontSize: 12,
+    fontWeight: '900',
+    paddingHorizontal: 10,
   },
   movePagePopup: {
     position: 'absolute',
