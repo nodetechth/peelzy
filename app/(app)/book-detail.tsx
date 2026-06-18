@@ -1594,6 +1594,7 @@ export default function BookDetailScreen() {
   const initialPageRef = useRef(currentPage);
   const loadedPagesRef = useRef(new Set<number>());
   const pageLoadPromisesRef = useRef(new Map<number, Promise<void>>());
+  const pageMutationVersionsRef = useRef(new Map<number, number>());
   const currentBookRef = useRef<Book | null>(null);
 
   const clearCanvasSelection = useCallback(() => {
@@ -1619,6 +1620,14 @@ export default function BookDetailScreen() {
     if (!bookId) return;
     setCachedBookPage(bookId, pageIndex, stickers, elements);
   }, [bookId]);
+
+  const getPageMutationVersion = useCallback((pageIndex: number) => (
+    pageMutationVersionsRef.current.get(pageIndex) ?? 0
+  ), []);
+
+  const markPageLocallyMutated = useCallback((pageIndex: number) => {
+    pageMutationVersionsRef.current.set(pageIndex, getPageMutationVersion(pageIndex) + 1);
+  }, [getPageMutationVersion]);
 
   const hydrateInitialPageFromCache = useCallback(async () => {
     if (!bookId) return false;
@@ -1652,6 +1661,8 @@ export default function BookDetailScreen() {
     if (!bookId) return;
     if (!force && loadedPagesRef.current.has(pageIndex)) return;
 
+    const requestMutationVersion = getPageMutationVersion(pageIndex);
+
     const existingRequest = pageLoadPromisesRef.current.get(pageIndex);
     if (existingRequest) {
       await existingRequest;
@@ -1682,6 +1693,10 @@ export default function BookDetailScreen() {
           throw elementsResult.error;
         }
 
+        if (requestMutationVersion !== getPageMutationVersion(pageIndex)) {
+          return;
+        }
+
         setPages((prev) => ({ ...prev, [pageIndex]: stickersResult.stickers }));
         setPageElements((prev) => ({ ...prev, [pageIndex]: elementsResult.elements }));
         cachePageSnapshot(pageIndex, stickersResult.stickers, elementsResult.elements);
@@ -1700,7 +1715,7 @@ export default function BookDetailScreen() {
 
     pageLoadPromisesRef.current.set(pageIndex, request);
     await request;
-  }, [bookId, cachePageSnapshot]);
+  }, [bookId, cachePageSnapshot, getPageMutationVersion]);
 
   const fetchInitialPage = useCallback(async () => {
     if (!bookId) return;
@@ -1961,24 +1976,18 @@ export default function BookDetailScreen() {
       metadata: { ...(sourceSticker.metadata || {}), bookScale },
     };
 
+    markPageLocallyMutated(currentPage);
+    markPageLocallyMutated(targetPage);
     setPages((prev) => {
       const next = { ...prev };
       next[currentPage] = (next[currentPage] || []).filter((sticker) => sticker.id !== id);
       next[targetPage] = [...(next[targetPage] || []), movedSticker];
+      cachePageSnapshot(currentPage, next[currentPage], pageElements[currentPage] || []);
+      if (loadedPagesRef.current.has(targetPage)) {
+        cachePageSnapshot(targetPage, next[targetPage], pageElements[targetPage] || []);
+      }
       return next;
     });
-    cachePageSnapshot(
-      currentPage,
-      (pages[currentPage] || []).filter((sticker) => sticker.id !== id),
-      pageElements[currentPage] || []
-    );
-    if (loadedPagesRef.current.has(targetPage)) {
-      cachePageSnapshot(
-        targetPage,
-        [...(pages[targetPage] || []), movedSticker],
-        pageElements[targetPage] || []
-      );
-    }
     setIsStickerSelected(false);
     setSelectedCanvasItemType(null);
 
@@ -1994,9 +2003,9 @@ export default function BookDetailScreen() {
       console.error('Error moving sticker to page:', error);
       await Promise.all([loadPage(currentPage, true), loadPage(targetPage, true)]);
     } else {
-      await loadPage(targetPage, true);
+      await Promise.all([loadPage(currentPage, true), loadPage(targetPage, true)]);
     }
-  }, [cachePageSnapshot, currentPage, loadPage, pageElements, pages]);
+  }, [cachePageSnapshot, currentPage, loadPage, markPageLocallyMutated, pageElements, pages]);
 
   const handleElementMove = useCallback((id: string, pos_x: number, pos_y: number, rotation: number, scale: number) => {
     setPageElements((prev) => {
@@ -2036,24 +2045,18 @@ export default function BookDetailScreen() {
       style: { ...(sourceElement.style || {}), scale },
     };
 
+    markPageLocallyMutated(currentPage);
+    markPageLocallyMutated(targetPage);
     setPageElements((prev) => {
       const next = { ...prev };
       next[currentPage] = (next[currentPage] || []).filter((element) => element.id !== id);
       next[targetPage] = [...(next[targetPage] || []), movedElement];
+      cachePageSnapshot(currentPage, pages[currentPage] || [], next[currentPage]);
+      if (loadedPagesRef.current.has(targetPage)) {
+        cachePageSnapshot(targetPage, pages[targetPage] || [], next[targetPage]);
+      }
       return next;
     });
-    cachePageSnapshot(
-      currentPage,
-      pages[currentPage] || [],
-      (pageElements[currentPage] || []).filter((element) => element.id !== id)
-    );
-    if (loadedPagesRef.current.has(targetPage)) {
-      cachePageSnapshot(
-        targetPage,
-        pages[targetPage] || [],
-        [...(pageElements[targetPage] || []), movedElement]
-      );
-    }
     setIsStickerSelected(false);
     setSelectedCanvasItemType(null);
 
@@ -2069,9 +2072,9 @@ export default function BookDetailScreen() {
       console.error('Error moving page element to page:', error);
       await Promise.all([loadPage(currentPage, true), loadPage(targetPage, true)]);
     } else {
-      await loadPage(targetPage, true);
+      await Promise.all([loadPage(currentPage, true), loadPage(targetPage, true)]);
     }
-  }, [cachePageSnapshot, currentPage, loadPage, pageElements, pages]);
+  }, [cachePageSnapshot, currentPage, loadPage, markPageLocallyMutated, pageElements, pages]);
 
   const handleElementDelete = useCallback(async (id: string) => {
     await deleteBookPageElement(id);

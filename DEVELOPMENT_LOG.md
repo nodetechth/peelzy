@@ -1369,3 +1369,18 @@
 - `app/(app)/home.tsx`
 - `supabase/migrations/20260618002500_align_book_color_constraints.sql`
 - `DEVELOPMENT_LOG.md`
+
+### 2026-06-18 12:10 JST
+
+作業:
+- Moveで別ページへ移動した後、ページ再取得の古い結果が戻って表示を上書きする競合を調査。
+- ページごとのローカル更新バージョンを追加し、Move後の古い取得結果を破棄するよう変更。
+- シール/Stamp/TextのMove時に移動元・移動先のキャッシュを即時更新し、DB更新後は両ページを再取得して整合させるよう修正。
+
+検証:
+- `./node_modules/.bin/tsc --noEmit --pretty false`
+- `git diff --check`
+
+ファイル:
+- `app/(app)/book-detail.tsx`
+- `DEVELOPMENT_LOG.md`
