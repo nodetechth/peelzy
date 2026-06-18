@@ -48,6 +48,21 @@
 - `lib/bookPageCache.ts`
 - `DEVELOPMENT_LOG.md`
 
+### 2026-06-18 12:45 JST
+
+作業:
+- シール化処理ログ`[StickerProcessingTiming]`へ、アップロード直前の`upload_bytes`/`upload_width`/`upload_height`/`upload_megapixels`を追加。
+- cutoutの背景除去先読みと同様に、rounded/heart/starのフレームPNGキャプチャをプレビュー読み込み完了後から先読みするよう変更。
+- Peelタップ時は先読み済みキャプチャを待ち、待ち時間を`frame_capture_wait_ms`として記録するようにした。
+
+検証:
+- `./node_modules/.bin/tsc --noEmit --pretty false`
+- `git diff --check`
+
+ファイル:
+- `app/(app)/crop.tsx`
+- `DEVELOPMENT_LOG.md`
+
 ### 2026-05-26 12:43 JST
 
 作業:

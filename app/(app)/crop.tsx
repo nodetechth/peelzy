@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -23,6 +23,7 @@ import { removeBackground, BackgroundRemovalProvider } from '../../lib/backgroun
 import { useAuth } from '../../contexts/AuthContext';
 import * as Haptics from 'expo-haptics';
 import * as ImageManipulator from 'expo-image-manipulator';
+import { File } from 'expo-file-system';
 import { captureRef } from 'react-native-view-shot';
 import Svg, { ClipPath, Defs, Image as SvgImage, Path, Rect } from 'react-native-svg';
 import {
@@ -70,6 +71,14 @@ type FramedStickerCapture = {
   uri: string;
   width: number;
   height: number;
+  bytes?: number;
+};
+
+type PreparedStickerUpload = {
+  uri: string;
+  width: number;
+  height: number;
+  bytes?: number;
 };
 
 function getNormalizedContentBounds(result?: BackgroundRemovalPreviewResult['nativeResult']) {
@@ -117,6 +126,15 @@ function logProcessingTimings(
     ...timings,
     total_ms: Date.now() - totalStartedAt,
   });
+}
+
+function getLocalFileSizeBytes(uri: string): number | undefined {
+  try {
+    const size = new File(uri).size;
+    return typeof size === 'number' && Number.isFinite(size) ? size : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 const PROCESSING_LINES: Record<ProcessingState, string[]> = {
@@ -579,7 +597,7 @@ FramedStickerCanvas.displayName = 'FramedStickerCanvas';
 
 async function prepareStickerFileForUpload(
   result: BackgroundRemovalPreviewResult
-): Promise<string> {
+): Promise<PreparedStickerUpload> {
   const sourceUri = result.nativeResult?.uri;
   if (!sourceUri || !result.nativeResult?.width || !result.nativeResult?.height) {
     throw new Error('Sticker file is not ready.');
@@ -587,7 +605,12 @@ async function prepareStickerFileForUpload(
 
   const longestEdge = Math.max(result.nativeResult.width, result.nativeResult.height);
   if (longestEdge <= STICKER_UPLOAD_MAX_EDGE) {
-    return sourceUri;
+    return {
+      uri: sourceUri,
+      width: result.nativeResult.width,
+      height: result.nativeResult.height,
+      bytes: getLocalFileSizeBytes(sourceUri),
+    };
   }
 
   const resized = await ImageManipulator.manipulateAsync(
@@ -605,7 +628,12 @@ async function prepareStickerFileForUpload(
     }
   );
 
-  return resized.uri;
+  return {
+    uri: resized.uri,
+    width: resized.width,
+    height: resized.height,
+    bytes: getLocalFileSizeBytes(resized.uri),
+  };
 }
 
 export default function CropScreen() {
@@ -640,6 +668,8 @@ export default function CropScreen() {
   const backgroundRemovalImageRef = useRef<string | null>(null);
   const framedStickerRef = useRef<View>(null);
   const [framePreviewReady, setFramePreviewReady] = useState(false);
+  const framedCapturePromiseRef = useRef<Promise<FramedStickerCapture> | null>(null);
+  const framedCaptureKeyRef = useRef<string | null>(null);
   const [processingElapsedSeconds, setProcessingElapsedSeconds] = useState(0);
   const processingStartedAtRef = useRef<number | null>(null);
   const processingRequestRef = useRef(false);
@@ -679,6 +709,8 @@ export default function CropScreen() {
     processingRequestRef.current = false;
     backgroundRemovalPromiseRef.current = null;
     backgroundRemovalImageRef.current = null;
+    framedCapturePromiseRef.current = null;
+    framedCaptureKeyRef.current = null;
     setFramePreviewReady(false);
   }, [photoUri, captureId, frameMode, frameColor]);
 
@@ -699,6 +731,18 @@ export default function CropScreen() {
 
     return () => clearTimeout(fallback);
   }, [imageUrl, isFramedSticker, processingState, stickerFrameColor, stickerFrameMode]);
+
+  const getFramedCaptureKey = useCallback(() => (
+    imageUrl
+      ? [
+          imageUrl,
+          stickerFrameMode,
+          stickerFrameColor,
+          framedCaptureWidth,
+          framedCaptureHeight,
+        ].join(':')
+      : null
+  ), [framedCaptureHeight, framedCaptureWidth, imageUrl, stickerFrameColor, stickerFrameMode]);
 
   useEffect(() => {
     setStatusLineIndex(0);
@@ -748,28 +792,64 @@ export default function CropScreen() {
     setLoadingBooks(false);
   };
 
-  const captureFramedSticker = async (
-    timings: ProcessingTimings
-  ): Promise<FramedStickerCapture> => {
+  const captureFramedStickerNow = useCallback(async (): Promise<FramedStickerCapture> => {
     if (!framedStickerRef.current) {
       throw new Error('Frame preview is not ready yet.');
     }
 
-    const uri = await measureAsyncStep(timings, 'frame_capture_ms', () =>
-      captureRef(framedStickerRef, {
+    const uri = await captureRef(framedStickerRef, {
         format: 'png',
         quality: 1,
         result: 'tmpfile',
         width: framedCaptureWidth,
         height: framedCaptureHeight,
-      })
-    );
+    });
 
     return {
       uri,
       width: framedCaptureWidth,
       height: framedCaptureHeight,
+      bytes: getLocalFileSizeBytes(uri),
     };
+  }, [framedCaptureHeight, framedCaptureWidth]);
+
+  useEffect(() => {
+    if (!imageUrl || !isFramedSticker || !framePreviewReady || processingState !== 'idle') return;
+
+    const captureKey = getFramedCaptureKey();
+    if (!captureKey || framedCaptureKeyRef.current === captureKey) return;
+
+    framedCaptureKeyRef.current = captureKey;
+    const capturePromise = captureFramedStickerNow();
+    capturePromise.catch((error: unknown) => {
+      if (framedCaptureKeyRef.current === captureKey) {
+        framedCaptureKeyRef.current = null;
+        framedCapturePromiseRef.current = null;
+      }
+      console.warn('Framed sticker preload capture failed:', error);
+    });
+    framedCapturePromiseRef.current = capturePromise;
+  }, [
+    captureFramedStickerNow,
+    framePreviewReady,
+    getFramedCaptureKey,
+    imageUrl,
+    isFramedSticker,
+    processingState,
+  ]);
+
+  const captureFramedSticker = async (
+    timings: ProcessingTimings
+  ): Promise<FramedStickerCapture> => {
+    const captureKey = getFramedCaptureKey();
+    const pendingCapture =
+      captureKey &&
+      framedCaptureKeyRef.current === captureKey &&
+      framedCapturePromiseRef.current
+        ? framedCapturePromiseRef.current
+        : captureFramedStickerNow();
+
+    return measureAsyncStep(timings, 'frame_capture_wait_ms', () => pendingCapture);
   };
 
   const processImage = async () => {
@@ -810,7 +890,7 @@ export default function CropScreen() {
         );
       }
 
-      let uploadUri: string;
+      let uploadFile: PreparedStickerUpload;
       let previewUriForThumbnail: string | null = null;
       let previewDimensions: { width?: number; height?: number } | undefined;
       let provider: BackgroundRemovalProvider | 'frame' = 'frame';
@@ -819,7 +899,7 @@ export default function CropScreen() {
       if (isFramedSticker) {
         const framedResult = await captureFramedSticker(timings);
         setProcessingState('uploading');
-        uploadUri = framedResult.uri;
+        uploadFile = framedResult;
         previewUriForThumbnail = framedResult.uri;
         previewDimensions = {
           width: framedResult.width,
@@ -852,7 +932,7 @@ export default function CropScreen() {
           timings.background_removal_native_ms = removalNativeResult.elapsedMs;
         }
 
-        uploadUri = await measureAsyncStep(
+        uploadFile = await measureAsyncStep(
           timings,
           'prepare_upload_ms',
           () => prepareStickerFileForUpload({
@@ -867,6 +947,11 @@ export default function CropScreen() {
           height: removalNativeResult?.height,
         };
       }
+
+      timings.upload_bytes = uploadFile.bytes ?? 0;
+      timings.upload_width = uploadFile.width;
+      timings.upload_height = uploadFile.height;
+      timings.upload_megapixels = Math.round((uploadFile.width * uploadFile.height) / 1000) / 1000;
 
       const metadata = {
         capturedAt: new Date().toISOString(),
@@ -890,7 +975,7 @@ export default function CropScreen() {
         timings,
         'sticker_upload_ms',
         () => uploadSticker(
-          uploadUri,
+          uploadFile.uri,
           user.id,
           metadata
         )
