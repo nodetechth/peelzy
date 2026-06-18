@@ -342,6 +342,9 @@ function getTextElementSize(content: string) {
 type Pages = Record<number, Sticker[]>;
 type ElementsByPage = Record<number, BookPageElement[]>;
 type CanvasSelectionType = 'sticker' | 'element' | null;
+type CanvasLayerItem =
+  | { type: 'sticker'; id: string; sticker: Sticker; layerOrder: number; createdAt: number }
+  | { type: 'element'; id: string; element: BookPageElement; layerOrder: number; createdAt: number };
 type SelectionAction = {
   type: 'done' | 'peel' | 'delete' | 'edit' | 'scaleUp' | 'scaleDown' | 'rotateLeft' | 'rotateRight' | 'layerUp' | 'layerDown' | 'moveToPage';
   nonce: number;
@@ -427,18 +430,19 @@ function PageCanvas({
   const [selectedStickerId, setSelectedStickerId] = useState<string | null>(null);
   const [selectedElementId, setSelectedElementId] = useState<string | null>(null);
   const [peelConfirmSticker, setPeelConfirmSticker] = useState<Sticker | null>(null);
-  const pendingStickerTapRef = useRef<Sticker | null>(null);
+  const pendingCanvasTapRef = useRef<{ type: CanvasSelectionType; id: string } | null>(null);
   const isBrutalist = pageTheme === 'brutalist';
   const isFilm = pageTheme === 'film';
   const selectedSticker = stickers.find((sticker) => sticker.id === selectedStickerId) ?? null;
   const selectedElement = elements.find((element) => element.id === selectedElementId) ?? null;
   const hasSelection = Boolean(selectedSticker || selectedElement);
+  const canvasLayerItems = useMemo(() => getCanvasLayerItems(stickers, elements), [elements, stickers]);
 
   useEffect(() => {
     setSelectedStickerId(null);
     setSelectedElementId(null);
     setPeelConfirmSticker(null);
-    pendingStickerTapRef.current = null;
+    pendingCanvasTapRef.current = null;
   }, [clearSelectionNonce, currentPage]);
 
   useEffect(() => {
@@ -629,13 +633,21 @@ function PageCanvas({
     [canvasScreenFrame]
   );
 
-  const findTopmostStickerAtPoint = useCallback(
+  const findTopmostCanvasItemAtPoint = useCallback(
     (pointX: number, pointY: number) => {
-      for (let index = stickers.length - 1; index >= 0; index -= 1) {
-        const sticker = stickers[index];
+      for (let index = canvasLayerItems.length - 1; index >= 0; index -= 1) {
+        const item = canvasLayerItems[index];
         if (
+          item.type === 'element' &&
+          isElementTapHit(item.element, pointX, pointY, canvasWidth, canvasHeight)
+        ) {
+          return item;
+        }
+
+        if (
+          item.type === 'sticker' &&
           isStickerTapHit(
-            sticker,
+            item.sticker,
             pointX,
             pointY,
             canvasWidth,
@@ -645,35 +657,29 @@ function PageCanvas({
             pagePanY
           )
         ) {
-          return sticker;
+          return item;
         }
       }
 
       return null;
     },
-    [canvasHeight, canvasWidth, pagePanX, pagePanY, pageZoom, stickers]
+    [canvasHeight, canvasLayerItems, canvasWidth, pagePanX, pagePanY, pageZoom]
   );
 
   const handleStartShouldSetResponderCapture = useCallback(
     (event: GestureResponderEvent) => {
       const point = getCanvasPoint(event);
-      const sticker = findTopmostStickerAtPoint(point.x, point.y);
-      if (sticker && sticker.id === selectedStickerId) return false;
-      pendingStickerTapRef.current = sticker;
-      return sticker !== null;
+      const item = findTopmostCanvasItemAtPoint(point.x, point.y);
+      const isSelectedItem =
+        (item?.type === 'sticker' && item.id === selectedStickerId) ||
+        (item?.type === 'element' && item.id === selectedElementId);
+      if (isSelectedItem) return false;
+
+      pendingCanvasTapRef.current = item ? { type: item.type, id: item.id } : null;
+      return item !== null;
     },
-    [findTopmostStickerAtPoint, getCanvasPoint, selectedStickerId]
+    [findTopmostCanvasItemAtPoint, getCanvasPoint, selectedElementId, selectedStickerId]
   );
-
-  const handleStickerTapRelease = useCallback(() => {
-    const sticker = pendingStickerTapRef.current;
-    pendingStickerTapRef.current = null;
-    if (sticker) handleStickerTap(sticker);
-  }, [handleStickerTap]);
-
-  const clearPendingStickerTap = useCallback(() => {
-    pendingStickerTapRef.current = null;
-  }, []);
 
   const handleElementTap = useCallback((element: BookPageElement) => {
     setSelectedStickerId(null);
@@ -681,13 +687,34 @@ function PageCanvas({
     Haptics.selectionAsync();
   }, []);
 
+  const handleCanvasTapRelease = useCallback(() => {
+    const item = pendingCanvasTapRef.current;
+    pendingCanvasTapRef.current = null;
+    if (!item) return;
+
+    if (item.type === 'sticker') {
+      const sticker = stickers.find((candidate) => candidate.id === item.id);
+      if (sticker) handleStickerTap(sticker);
+      return;
+    }
+
+    if (item.type === 'element') {
+      const element = elements.find((candidate) => candidate.id === item.id);
+      if (element) handleElementTap(element);
+    }
+  }, [elements, handleElementTap, handleStickerTap, stickers]);
+
+  const clearPendingCanvasTap = useCallback(() => {
+    pendingCanvasTapRef.current = null;
+  }, []);
+
   const handleCanvasEmptyPress = useCallback(() => {
     if (!hasSelection) return;
-    if (pendingStickerTapRef.current) return;
+    if (pendingCanvasTapRef.current) return;
     setSelectedStickerId(null);
     setSelectedElementId(null);
     setPeelConfirmSticker(null);
-    pendingStickerTapRef.current = null;
+    pendingCanvasTapRef.current = null;
     Haptics.selectionAsync();
   }, [hasSelection]);
 
@@ -721,8 +748,8 @@ function PageCanvas({
   return (
     <View
       onStartShouldSetResponderCapture={handleStartShouldSetResponderCapture}
-      onResponderRelease={handleStickerTapRelease}
-      onResponderTerminate={clearPendingStickerTap}
+      onResponderRelease={handleCanvasTapRelease}
+      onResponderTerminate={clearPendingCanvasTap}
       onStartShouldSetResponder={() => hasSelection}
       onResponderGrant={handleCanvasEmptyPress}
       style={[
@@ -786,34 +813,43 @@ function PageCanvas({
         </>
       )}
 
-      {elements.map((element) => (
-        <DraggablePageElement
-          key={element.id}
-          element={element}
-          isSelected={selectedElementId === element.id}
-          canvasWidth={canvasWidth}
-          canvasHeight={canvasHeight}
-          onTap={() => handleElementTap(element)}
-          onTransform={onElementMove}
-        />
-      ))}
+      {canvasLayerItems.map((item, index) => {
+        const baseZIndex = index + 1;
+        if (item.type === 'element') {
+          const { element } = item;
+          return (
+            <DraggablePageElement
+              key={`element-${element.id}`}
+              element={element}
+              isSelected={selectedElementId === element.id}
+              baseZIndex={baseZIndex}
+              canvasWidth={canvasWidth}
+              canvasHeight={canvasHeight}
+              onTap={() => handleElementTap(element)}
+              onTransform={onElementMove}
+            />
+          );
+        }
 
-      {stickers.map((sticker) => (
-        <DraggableSticker
-          key={sticker.id}
-          sticker={sticker}
-          isSelected={selectedStickerId === sticker.id}
-          canvasWidth={canvasWidth}
-          canvasHeight={canvasHeight}
-          onTap={() => handleStickerTap(sticker)}
-          onTransform={onStickerTransform}
-          isNewlyPlaced={sticker.id === newlyPlacedId}
-          pageZoom={pageZoom}
-          pagePanX={pagePanX}
-          pagePanY={pagePanY}
-          allowVisibleOverflowDrag
-        />
-      ))}
+        const { sticker } = item;
+        return (
+          <DraggableSticker
+            key={`sticker-${sticker.id}`}
+            sticker={sticker}
+            isSelected={selectedStickerId === sticker.id}
+            baseZIndex={baseZIndex}
+            canvasWidth={canvasWidth}
+            canvasHeight={canvasHeight}
+            onTap={() => handleStickerTap(sticker)}
+            onTransform={onStickerTransform}
+            isNewlyPlaced={sticker.id === newlyPlacedId}
+            pageZoom={pageZoom}
+            pagePanX={pagePanX}
+            pagePanY={pagePanY}
+            allowVisibleOverflowDrag
+          />
+        );
+      })}
 
       <Modal
         visible={peelConfirmSticker !== null}
@@ -868,6 +904,7 @@ function PageCanvas({
 type DraggablePageElementProps = {
   element: BookPageElement;
   isSelected: boolean;
+  baseZIndex: number;
   canvasWidth: number;
   canvasHeight: number;
   onTap: () => void;
@@ -894,9 +931,90 @@ function getElementScale(element: BookPageElement) {
   return clamp(scale, 0.45, 2.6);
 }
 
+function getCreatedAtValue(createdAt: string) {
+  const parsed = Date.parse(createdAt);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function getCanvasLayerItems(stickers: Sticker[], elements: BookPageElement[]): CanvasLayerItem[] {
+  return [
+    ...stickers.map((sticker) => ({
+      type: 'sticker' as const,
+      id: sticker.id,
+      sticker,
+      layerOrder: getLayerOrder(sticker, getCreatedAtValue(sticker.created_at)),
+      createdAt: getCreatedAtValue(sticker.created_at),
+    })),
+    ...elements.map((element) => ({
+      type: 'element' as const,
+      id: element.id,
+      element,
+      layerOrder: getLayerOrder(element, getCreatedAtValue(element.created_at)),
+      createdAt: getCreatedAtValue(element.created_at),
+    })),
+  ].sort((a, b) => {
+    const orderDiff = a.layerOrder - b.layerOrder;
+    if (orderDiff !== 0) return orderDiff;
+
+    const createdAtDiff = a.createdAt - b.createdAt;
+    if (createdAtDiff !== 0) return createdAtDiff;
+
+    return `${a.type}:${a.id}`.localeCompare(`${b.type}:${b.id}`);
+  });
+}
+
+function getCanvasLayerItemKey(item: Pick<CanvasLayerItem, 'type' | 'id'>) {
+  return `${item.type}:${item.id}`;
+}
+
+function reorderCanvasLayerItems(
+  items: CanvasLayerItem[],
+  type: NonNullable<CanvasSelectionType>,
+  id: string,
+  direction: 'up' | 'down'
+) {
+  const targetKey = `${type}:${id}`;
+  const index = items.findIndex((item) => getCanvasLayerItemKey(item) === targetKey);
+  if (index === -1) return items;
+
+  const targetIndex = direction === 'up' ? index + 1 : index - 1;
+  if (targetIndex < 0 || targetIndex >= items.length) return items;
+
+  const next = [...items];
+  [next[index], next[targetIndex]] = [next[targetIndex], next[index]];
+  return next;
+}
+
+function isElementTapHit(
+  element: BookPageElement,
+  pointX: number,
+  pointY: number,
+  canvasWidth: number,
+  canvasHeight: number
+) {
+  const baseSize = getElementSize(element);
+  const scale = getElementScale(element);
+  const width = baseSize.width * scale;
+  const height = baseSize.height * scale;
+  const centerX = element.pos_x * canvasWidth;
+  const centerY = element.pos_y * canvasHeight;
+  const rotationRadians = ((element.rotation ?? 0) * Math.PI) / 180;
+  const deltaX = pointX - centerX;
+  const deltaY = pointY - centerY;
+  const localX = deltaX * Math.cos(rotationRadians) + deltaY * Math.sin(rotationRadians);
+  const localY = -deltaX * Math.sin(rotationRadians) + deltaY * Math.cos(rotationRadians);
+  const hitExpansion = element.type === 'stamp' ? 10 : 6;
+
+  return (
+    Math.abs(localX) <= width / 2 + hitExpansion &&
+    Math.abs(localY) <= height / 2 + hitExpansion
+  );
+}
+
 function DraggablePageElement({
   element,
   isSelected,
+  baseZIndex,
   canvasWidth,
   canvasHeight,
   onTap,
@@ -911,7 +1029,7 @@ function DraggablePageElement({
   const pan = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
   const liftScale = useRef(new Animated.Value(1)).current;
   const [currentPos, setCurrentPos] = useState({ x: initialX, y: initialY });
-  const [currentZIndex, setCurrentZIndex] = useState(2);
+  const [currentZIndex, setCurrentZIndex] = useState(baseZIndex);
   const [isCommittingDrop, setIsCommittingDrop] = useState(false);
   const positionRef = useRef({ x: initialX, y: initialY });
   const scaleRef = useRef(initialScale);
@@ -938,6 +1056,14 @@ function DraggablePageElement({
     pan.setOffset({ x: 0, y: 0 });
     pan.setValue({ x: 0, y: 0 });
   }, [baseSize.height, baseSize.width, canvasHeight, canvasWidth, element.pos_x, element.pos_y, element.rotation, element.style]);
+
+  useEffect(() => {
+    if (isSelected) {
+      setCurrentZIndex(998);
+      return;
+    }
+    setCurrentZIndex(baseZIndex);
+  }, [baseZIndex, isSelected]);
 
   const saveElementTransform = useCallback((finalX: number, finalY: number) => {
     const finalScale = scaleRef.current;
@@ -1077,7 +1203,7 @@ function DraggablePageElement({
               damping: 14,
               stiffness: 220,
               useNativeDriver: true,
-            }).start(() => setCurrentZIndex(2));
+            }).start(() => setCurrentZIndex(baseZIndex));
             return;
           }
 
@@ -1085,7 +1211,7 @@ function DraggablePageElement({
             pan.setOffset({ x: 0, y: 0 });
             pan.setValue({ x: 0, y: 0 });
             gestureModeRef.current = null;
-            setCurrentZIndex(2);
+            setCurrentZIndex(baseZIndex);
             onTap();
             Animated.spring(liftScale, {
               toValue: 1,
@@ -1111,13 +1237,14 @@ function DraggablePageElement({
             damping: 14,
             stiffness: 220,
             useNativeDriver: true,
-          }).start(() => setCurrentZIndex(2));
+          }).start(() => setCurrentZIndex(baseZIndex));
           requestAnimationFrame(() => setIsCommittingDrop(false));
         },
       }),
     [
       baseSize.height,
       baseSize.width,
+      baseZIndex,
       getDragBounds,
       isSelected,
       liftScale,
@@ -1173,6 +1300,7 @@ function DraggablePageElement({
 type DraggableStickerProps = {
   sticker: Sticker;
   isSelected: boolean;
+  baseZIndex: number;
   canvasWidth: number;
   canvasHeight: number;
   onTap: () => void;
@@ -1187,6 +1315,7 @@ type DraggableStickerProps = {
 function DraggableSticker({
   sticker,
   isSelected,
+  baseZIndex,
   canvasWidth,
   canvasHeight,
   onTap,
@@ -1233,7 +1362,7 @@ function DraggableSticker({
   const rotate = useRef(new Animated.Value(0)).current;
 
   const [currentPos, setCurrentPos] = useState({ x: initialX, y: initialY });
-  const [currentZIndex, setCurrentZIndex] = useState(1);
+  const [currentZIndex, setCurrentZIndex] = useState(baseZIndex);
   const [isDragging, setIsDragging] = useState(false);
   const [isCommittingDrop, setIsCommittingDrop] = useState(false);
   const positionRef = useRef({ x: initialX, y: initialY });
@@ -1291,9 +1420,9 @@ function DraggableSticker({
       return;
     }
     resetTemporaryStickerTransform();
-    setCurrentZIndex(1);
+    setCurrentZIndex(baseZIndex);
     setIsDragging(false);
-  }, [isSelected, resetTemporaryStickerTransform]);
+  }, [baseZIndex, isSelected, resetTemporaryStickerTransform]);
 
   const getNormalizedPosition = useCallback((finalX: number, finalY: number) => {
     const finalBookScale = bookScaleRef.current;
@@ -1346,13 +1475,13 @@ function DraggableSticker({
         useNativeDriver: true,
       }),
     ]).start(() => {
-      setCurrentZIndex(1);
+      setCurrentZIndex(baseZIndex);
       setIsDragging(false);
     });
 
     positionRef.current = { x: finalX, y: finalY };
     saveTransform(finalX, finalY);
-  }, [saveTransform]);
+  }, [baseZIndex, saveTransform]);
 
   const persistCurrentTransform = useCallback(() => {
     const finalStickerSize = STICKER_SIZE * pageZoom * bookScaleRef.current;
@@ -1499,7 +1628,7 @@ function DraggableSticker({
                 useNativeDriver: true,
               }),
             ]).start(() => {
-              setCurrentZIndex(1);
+              setCurrentZIndex(baseZIndex);
               setIsDragging(false);
             });
             return;
@@ -1509,7 +1638,7 @@ function DraggableSticker({
             pan.setOffset({ x: 0, y: 0 });
             pan.setValue({ x: 0, y: 0 });
             gestureModeRef.current = null;
-            setCurrentZIndex(1);
+            setCurrentZIndex(baseZIndex);
             setIsDragging(false);
             resetTemporaryStickerTransform();
             onTap();
@@ -1533,6 +1662,7 @@ function DraggableSticker({
       }),
     [
       isSelected,
+      baseZIndex,
       allowVisibleOverflowDrag,
       canvasWidth,
       canvasHeight,
@@ -2100,37 +2230,59 @@ export default function BookDetailScreen() {
     }
   }, [cachePageSnapshot, currentPage, loadPage, markPageLocallyMutated, pageElements, pages]);
 
-  const handleStickerLayerChange = useCallback((id: string, direction: 'up' | 'down') => {
+  const handleCanvasLayerChange = useCallback((type: NonNullable<CanvasSelectionType>, id: string, direction: 'up' | 'down') => {
     if (!bookId) return;
 
-    markPageLocallyMutated(currentPage);
-    setPages((prev) => {
-      const currentStickers = sortByLayerOrder(prev[currentPage] || []);
-      const movedStickers = reorderLayerItems(currentStickers, id, direction);
-      if (movedStickers === currentStickers) return prev;
+    const currentStickers = pages[currentPage] || [];
+    const currentElements = pageElements[currentPage] || [];
+    const currentItems = getCanvasLayerItems(currentStickers, currentElements);
+    const movedItems = reorderCanvasLayerItems(currentItems, type, id, direction);
+    if (movedItems === currentItems) return;
 
-      const reordered = movedStickers.map((sticker, index) => ({
-        ...sticker,
-        metadata: {
-          ...(sticker.metadata || {}),
-          layerOrder: layerOrderForIndex(index),
+    const nextStickers: Sticker[] = [];
+    const nextElements: BookPageElement[] = [];
+    movedItems.forEach((item, index) => {
+      const layerOrder = layerOrderForIndex(index);
+      if (item.type === 'sticker') {
+        nextStickers.push({
+          ...item.sticker,
+          metadata: {
+            ...(item.sticker.metadata || {}),
+            layerOrder,
+          },
+        });
+        return;
+      }
+
+      nextElements.push({
+        ...item.element,
+        style: {
+          ...(item.element.style || {}),
+          layerOrder,
         },
-      }));
-
-      const next = { ...prev, [currentPage]: reordered };
-      cachePageSnapshot(currentPage, reordered, pageElements[currentPage] || []);
-
-      Promise.all(
-        reordered.map((sticker) =>
-          updateStickerBookMetadata(sticker.id, bookId, sticker.metadata || {})
-        )
-      ).catch((error) => {
-        console.warn('Failed to save sticker layer order:', error);
       });
-
-      return next;
     });
-  }, [bookId, cachePageSnapshot, currentPage, markPageLocallyMutated, pageElements]);
+
+    markPageLocallyMutated(currentPage);
+    setPages((prev) => ({ ...prev, [currentPage]: nextStickers }));
+    setPageElements((prev) => ({ ...prev, [currentPage]: nextElements }));
+    cachePageSnapshot(currentPage, nextStickers, nextElements);
+
+    Promise.all([
+      ...nextStickers.map((sticker) =>
+        updateStickerBookMetadata(sticker.id, bookId, sticker.metadata || {})
+      ),
+      ...nextElements.map((element) =>
+        updateBookPageElementStyle(element.id, bookId, element.style || {})
+      ),
+    ]).catch((error) => {
+      console.warn('Failed to save canvas layer order:', error);
+    });
+  }, [bookId, cachePageSnapshot, currentPage, markPageLocallyMutated, pageElements, pages]);
+
+  const handleStickerLayerChange = useCallback((id: string, direction: 'up' | 'down') => {
+    handleCanvasLayerChange('sticker', id, direction);
+  }, [handleCanvasLayerChange]);
 
   const handleElementMove = useCallback((id: string, pos_x: number, pos_y: number, rotation: number, scale: number) => {
     setPageElements((prev) => {
@@ -2203,36 +2355,8 @@ export default function BookDetailScreen() {
   }, [cachePageSnapshot, currentPage, loadPage, markPageLocallyMutated, pageElements, pages]);
 
   const handleElementLayerChange = useCallback((id: string, direction: 'up' | 'down') => {
-    if (!bookId) return;
-
-    markPageLocallyMutated(currentPage);
-    setPageElements((prev) => {
-      const currentElements = sortByLayerOrder(prev[currentPage] || []);
-      const movedElements = reorderLayerItems(currentElements, id, direction);
-      if (movedElements === currentElements) return prev;
-
-      const reordered = movedElements.map((element, index) => ({
-        ...element,
-        style: {
-          ...(element.style || {}),
-          layerOrder: layerOrderForIndex(index),
-        },
-      }));
-
-      const next = { ...prev, [currentPage]: reordered };
-      cachePageSnapshot(currentPage, pages[currentPage] || [], reordered);
-
-      Promise.all(
-        reordered.map((element) =>
-          updateBookPageElementStyle(element.id, bookId, element.style || {})
-        )
-      ).catch((error) => {
-        console.warn('Failed to save element layer order:', error);
-      });
-
-      return next;
-    });
-  }, [bookId, cachePageSnapshot, currentPage, markPageLocallyMutated, pages]);
+    handleCanvasLayerChange('element', id, direction);
+  }, [handleCanvasLayerChange]);
 
   const handleElementDelete = useCallback(async (id: string) => {
     await deleteBookPageElement(id);

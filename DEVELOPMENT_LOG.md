@@ -1497,3 +1497,18 @@
 - `app/(app)/book-detail.tsx`
 - `lib/storage.ts`
 - `DEVELOPMENT_LOG.md`
+
+### 2026-06-19 00:35 JST
+
+作業:
+- シール帳詳細でシール/Stamp/Textが重なった位置をタップした時、共通のレイヤー順で最前面のオブジェクトを選択するよう修正。
+- 描画もシール/Stamp/Textを共通レイヤーリストで行い、見た目の最前面とタップ選択の最前面が一致するようにした。
+- `Layer`操作をシール同士/要素同士だけでなく、シールとStamp/Textをまたいで上下移動できるよう共通化。
+
+検証:
+- `./node_modules/.bin/tsc --noEmit --pretty false`
+- `git diff --check`
+
+ファイル:
+- `app/(app)/book-detail.tsx`
+- `DEVELOPMENT_LOG.md`
