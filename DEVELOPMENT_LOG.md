@@ -30,6 +30,24 @@
 - `app/(app)/book-detail.tsx`
 - `DEVELOPMENT_LOG.md`
 
+### 2026-06-18 12:25 JST
+
+作業:
+- Moveで別Bookのページに移ったように見える事象を追加調査。
+- Move更新処理は`page_index`のみ更新しており`book_id`自体は変更していなかったが、DB更新条件が`id`のみで現在Bookの検証が不足していた。
+- シール/Stamp/TextのMove更新に現在の`bookId`条件を追加し、別Book所属のアイテムは更新できないよう防御。
+- Bookページキャッシュ読み込み時に、現在Book以外のシール/要素が混ざっていた場合は表示対象から除外するよう修正。
+
+検証:
+- `./node_modules/.bin/tsc --noEmit --pretty false`
+- `git diff --check`
+
+ファイル:
+- `app/(app)/book-detail.tsx`
+- `lib/storage.ts`
+- `lib/bookPageCache.ts`
+- `DEVELOPMENT_LOG.md`
+
 ### 2026-05-26 12:43 JST
 
 作業:

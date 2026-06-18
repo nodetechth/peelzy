@@ -1046,13 +1046,14 @@ export async function updateStickerPageTransform(
 
 export async function updateStickerBookPageTransform(
   id: string,
-  layout: { page_index: number; pos_x: number; pos_y: number; rotation: number; bookScale: number }
+  layout: { bookId: string; page_index: number; pos_x: number; pos_y: number; rotation: number; bookScale: number }
 ): Promise<{ error: Error | null }> {
   try {
     const { data: currentSticker, error: fetchError } = await supabase
       .from('stickers')
       .select('metadata')
       .eq('id', id)
+      .eq('book_id', layout.bookId)
       .single();
 
     if (fetchError) {
@@ -1068,7 +1069,7 @@ export async function updateStickerBookPageTransform(
       bookScale: Math.max(0.35, Math.min(2.8, layout.bookScale)),
     };
 
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from('stickers')
       .update({
         page_index: layout.page_index,
@@ -1077,10 +1078,16 @@ export async function updateStickerBookPageTransform(
         rotation: layout.rotation,
         metadata: nextMetadata,
       })
-      .eq('id', id);
+      .eq('id', id)
+      .eq('book_id', layout.bookId)
+      .select('id')
+      .maybeSingle();
 
     if (error) {
       return { error };
+    }
+    if (!data) {
+      return { error: new Error('Sticker not found in this book') };
     }
 
     return { error: null };
@@ -1267,17 +1274,21 @@ export async function createBookPageElement(
 
 export async function updateBookPageElementLayout(
   id: string,
-  layout: { pos_x: number; pos_y: number; rotation: number; scale?: number; page_index?: number }
+  layout: { pos_x: number; pos_y: number; rotation: number; scale?: number; page_index?: number; bookId?: string }
 ): Promise<{ error: Error | null }> {
   try {
     let nextStyle: Record<string, unknown> | undefined;
 
     if (layout.scale !== undefined) {
-      const { data, error: selectError } = await supabase
+      let query = supabase
         .from('book_page_elements')
         .select('style')
-        .eq('id', id)
-        .single();
+        .eq('id', id);
+      if (layout.bookId) {
+        query = query.eq('book_id', layout.bookId);
+      }
+
+      const { data, error: selectError } = await query.single();
 
       if (selectError) {
         return { error: selectError };
@@ -1290,7 +1301,7 @@ export async function updateBookPageElementLayout(
       nextStyle = { ...currentStyle, scale: layout.scale };
     }
 
-    const { error } = await supabase
+    let updateQuery = supabase
       .from('book_page_elements')
       .update({
         pos_x: layout.pos_x,
@@ -1301,9 +1312,17 @@ export async function updateBookPageElementLayout(
         updated_at: new Date().toISOString(),
       })
       .eq('id', id);
+    if (layout.bookId) {
+      updateQuery = updateQuery.eq('book_id', layout.bookId);
+    }
+
+    const { data, error } = await updateQuery.select('id').maybeSingle();
 
     if (error) {
       return { error };
+    }
+    if (!data) {
+      return { error: new Error('Page element not found in this book') };
     }
 
     return { error: null };

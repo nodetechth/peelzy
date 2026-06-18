@@ -75,9 +75,12 @@ export async function getCachedBookPage(
       return null;
     }
 
+    const stickers = cached.stickers.filter((sticker) => sticker.book_id === bookId);
+    const elements = cached.elements.filter((element) => element.book_id === bookId);
+
     return {
-      stickers: cached.stickers,
-      elements: cached.elements,
+      stickers,
+      elements,
     };
   } catch (error) {
     console.warn(`Failed to read cached book page ${pageIndex + 1}:`, error);

@@ -1992,6 +1992,7 @@ export default function BookDetailScreen() {
     setSelectedCanvasItemType(null);
 
     const { error } = await updateStickerBookPageTransform(id, {
+      bookId,
       page_index: targetPage,
       pos_x: nextPosX,
       pos_y: nextPosY,
@@ -2061,6 +2062,7 @@ export default function BookDetailScreen() {
     setSelectedCanvasItemType(null);
 
     const { error } = await updateBookPageElementLayout(id, {
+      bookId,
       page_index: targetPage,
       pos_x: nextPosX,
       pos_y: nextPosY,
