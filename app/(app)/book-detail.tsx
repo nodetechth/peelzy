@@ -2359,7 +2359,7 @@ export default function BookDetailScreen() {
     if (error) {
       console.error('Error updating book page color:', error);
       setBookPageColor(previousColor);
-      Alert.alert('エラー', 'ページカラーの更新に失敗しました');
+      Alert.alert('Error', 'Failed to update the page color.');
       return;
     }
 

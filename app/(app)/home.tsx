@@ -218,7 +218,7 @@ export default function HomeScreen() {
   const handleSaveBookSettings = useCallback(async () => {
     const name = bookFormName.trim();
     if (!name) {
-      Alert.alert('エラー', 'Book名を入力してください');
+      Alert.alert('Error', 'Enter a book name.');
       return;
     }
 
@@ -232,7 +232,7 @@ export default function HomeScreen() {
       setSavingBookSettings(false);
 
       if (error || !book) {
-        Alert.alert('エラー', 'シール帳の作成に失敗しました');
+        Alert.alert('Error', 'Failed to create the book.');
         return;
       }
 
@@ -260,7 +260,7 @@ export default function HomeScreen() {
 
     if (error) {
       console.error('Error updating book settings:', error);
-      Alert.alert('エラー', 'Book設定の更新に失敗しました');
+      Alert.alert('Error', 'Failed to update the book settings.');
       return;
     }
 
@@ -304,13 +304,13 @@ export default function HomeScreen() {
 
   const openBillingUrl = async (url: string | null) => {
     if (!url) {
-      Alert.alert('エラー', 'Stripeのリンクを作成できませんでした');
+      Alert.alert('Error', 'Failed to create the Stripe link.');
       return;
     }
 
     const canOpen = await Linking.canOpenURL(url);
     if (!canOpen) {
-      Alert.alert('エラー', 'Stripeのリンクを開けませんでした');
+      Alert.alert('Error', 'Failed to open the Stripe link.');
       return;
     }
 
@@ -327,12 +327,12 @@ export default function HomeScreen() {
       setBillingLoading(false);
 
       if (result.error) {
-        Alert.alert('購入に失敗しました', result.error.message);
+        Alert.alert('Purchase failed', result.error.message);
         return;
       }
 
       if (result.isPlus) {
-        Alert.alert('Peelzy Plus', 'Plusプランが有効になりました。');
+        Alert.alert('Peelzy Plus', 'Your Plus plan is active.');
       }
       return;
     }
@@ -345,7 +345,7 @@ export default function HomeScreen() {
     setBillingLoading(false);
 
     if (result.error) {
-      Alert.alert('エラー', 'Stripeへの接続に失敗しました');
+      Alert.alert('Error', 'Failed to connect to Stripe.');
       return;
     }
 
@@ -355,7 +355,7 @@ export default function HomeScreen() {
   const handleRestorePurchases = async () => {
     if (!user?.id) return;
     if (!isRevenueCatConfigured()) {
-      Alert.alert('設定が必要です', 'RevenueCatのAPIキーが設定されていません。');
+      Alert.alert('Setup required', 'The RevenueCat API key is not configured.');
       return;
     }
 
@@ -365,13 +365,13 @@ export default function HomeScreen() {
     setBillingLoading(false);
 
     if (result.error) {
-      Alert.alert('復元に失敗しました', result.error.message);
+      Alert.alert('Restore failed', result.error.message);
       return;
     }
 
     Alert.alert(
-      '購入を復元',
-      result.isPlus ? 'Plusプランを復元しました。' : '有効なPlusプランは見つかりませんでした。'
+      'Restore purchases',
+      result.isPlus ? 'Your Plus plan has been restored.' : 'No active Plus plan was found.'
     );
   };
 

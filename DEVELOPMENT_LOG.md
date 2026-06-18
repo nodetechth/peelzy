@@ -1351,3 +1351,21 @@
 ファイル:
 - `app/(app)/home.tsx`
 - `DEVELOPMENT_LOG.md`
+
+### 2026-06-18 00:45 JST
+
+作業:
+- シール帳詳細のページカラー更新失敗原因を調査。
+- アプリの現行カラーパレットとSupabaseの`books_page_color_check`/`books_accent_color_check`制約がずれていたため、DB制約を現行7色へ揃えるマイグレーションを追加。
+- 既存の古い色値は近い現行色へ変換してから制約を張り直すようにした。
+- Book設定/ページカラー/課金まわりのエラー表示を英語へ統一。
+
+検証:
+- `./node_modules/.bin/tsc --noEmit --pretty false`
+- `git diff --check`
+
+ファイル:
+- `app/(app)/book-detail.tsx`
+- `app/(app)/home.tsx`
+- `supabase/migrations/20260618002500_align_book_color_constraints.sql`
+- `DEVELOPMENT_LOG.md`
