@@ -1481,3 +1481,19 @@
 ファイル:
 - `app/(app)/book-detail.tsx`
 - `DEVELOPMENT_LOG.md`
+
+### 2026-06-19 00:05 JST
+
+作業:
+- シール帳詳細の選択DOCから全体の灰色背景・枠・影を削除し、各ボタンが単体で浮く表示へ変更。
+- `Layer`ボタンを追加し、Size/Turnと同じ上ポップアップで選択中のシール/Stamp/Textを前面・背面へ移動できるようにした。
+- レイヤー順をシールは`metadata.layerOrder`、Stamp/Textは`style.layerOrder`へ保存し、再表示後も重なり順が維持されるようにした。
+
+検証:
+- `./node_modules/.bin/tsc --noEmit --pretty false`
+- `git diff --check`
+
+ファイル:
+- `app/(app)/book-detail.tsx`
+- `lib/storage.ts`
+- `DEVELOPMENT_LOG.md`

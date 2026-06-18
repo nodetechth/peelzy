@@ -38,7 +38,9 @@ import {
   getUnplacedStickers,
   updateBookPageElementContent,
   updateBookPageElementLayout,
+  updateBookPageElementStyle,
   updateBookPageColor,
+  updateStickerBookMetadata,
   updateStickerBookPageTransform,
   updateStickerPageTransform,
   removeStickerFromPage,
@@ -87,6 +89,51 @@ const STAMP_CHOICES = ['♡', '☆', '✦', '☺', '♬', '☾'];
 const randomBetween = (min: number, max: number) => Math.random() * (max - min) + min;
 const normalizeRotation = (value: number) => ((((value + 180) % 360) + 360) % 360) - 180;
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+
+function getLayerOrder(
+  item: Pick<Sticker, 'metadata' | 'created_at'> | Pick<BookPageElement, 'style' | 'created_at'>,
+  fallback: number
+): number {
+  const source = 'metadata' in item
+    ? item.metadata
+    : (item as Pick<BookPageElement, 'style' | 'created_at'>).style;
+  const rawOrder = source?.layerOrder;
+  if (typeof rawOrder === 'number' && Number.isFinite(rawOrder)) {
+    return rawOrder;
+  }
+
+  const createdAt = Date.parse(item.created_at);
+  return Number.isFinite(createdAt) ? createdAt : fallback;
+}
+
+function sortByLayerOrder<T extends { id: string; created_at: string; metadata?: Record<string, unknown>; style?: Record<string, unknown> }>(
+  items: T[]
+): T[] {
+  return [...items].sort((a, b) => {
+    const orderDiff = getLayerOrder(a, 0) - getLayerOrder(b, 0);
+    return orderDiff !== 0 ? orderDiff : a.id.localeCompare(b.id);
+  });
+}
+
+function reorderLayerItems<T extends { id: string }>(
+  items: T[],
+  id: string,
+  direction: 'up' | 'down'
+): T[] {
+  const index = items.findIndex((item) => item.id === id);
+  if (index === -1) return items;
+
+  const targetIndex = direction === 'up' ? index + 1 : index - 1;
+  if (targetIndex < 0 || targetIndex >= items.length) return items;
+
+  const next = [...items];
+  [next[index], next[targetIndex]] = [next[targetIndex], next[index]];
+  return next;
+}
+
+function layerOrderForIndex(index: number): number {
+  return (index + 1) * 1000;
+}
 
 function getTouchDistance(touches: Array<{ pageX: number; pageY: number }>) {
   if (touches.length < 2) return 0;
@@ -296,7 +343,7 @@ type Pages = Record<number, Sticker[]>;
 type ElementsByPage = Record<number, BookPageElement[]>;
 type CanvasSelectionType = 'sticker' | 'element' | null;
 type SelectionAction = {
-  type: 'done' | 'peel' | 'delete' | 'edit' | 'scaleUp' | 'scaleDown' | 'rotateLeft' | 'rotateRight' | 'moveToPage';
+  type: 'done' | 'peel' | 'delete' | 'edit' | 'scaleUp' | 'scaleDown' | 'rotateLeft' | 'rotateRight' | 'layerUp' | 'layerDown' | 'moveToPage';
   nonce: number;
   targetPage?: number;
 };
@@ -315,6 +362,7 @@ type PageCanvasProps = {
     rotation: number,
     bookScale: number
   ) => void;
+  onStickerLayerChange: (id: string, direction: 'up' | 'down') => void;
   onStickerPeelOff: (id: string) => void;
   onElementMove: (id: string, pos_x: number, pos_y: number, rotation: number, scale: number) => void;
   onElementMoveToPage: (
@@ -325,6 +373,7 @@ type PageCanvasProps = {
     rotation: number,
     scale: number
   ) => void;
+  onElementLayerChange: (id: string, direction: 'up' | 'down') => void;
   onElementDelete: (id: string) => void;
   onElementEditRequest: (element: BookPageElement) => void;
   onEmptyPress: () => void;
@@ -351,9 +400,11 @@ function PageCanvas({
   isArranging,
   onStickerTransform,
   onStickerMoveToPage,
+  onStickerLayerChange,
   onStickerPeelOff,
   onElementMove,
   onElementMoveToPage,
+  onElementLayerChange,
   onElementDelete,
   onElementEditRequest,
   onEmptyPress,
@@ -414,6 +465,26 @@ function PageCanvas({
 
     if (selectionAction.type === 'edit' && selectedElement) {
       onElementEditRequest(selectedElement);
+    }
+
+    if (selectionAction.type === 'layerUp') {
+      if (selectedSticker) {
+        onStickerLayerChange(selectedSticker.id, 'up');
+      }
+      if (selectedElement) {
+        onElementLayerChange(selectedElement.id, 'up');
+      }
+      Haptics.selectionAsync();
+    }
+
+    if (selectionAction.type === 'layerDown') {
+      if (selectedSticker) {
+        onStickerLayerChange(selectedSticker.id, 'down');
+      }
+      if (selectedElement) {
+        onElementLayerChange(selectedElement.id, 'down');
+      }
+      Haptics.selectionAsync();
     }
 
     if (
@@ -522,8 +593,10 @@ function PageCanvas({
     onElementEditRequest,
     onElementMove,
     onElementMoveToPage,
+    onElementLayerChange,
     onSelectionActionHandled,
     onStickerMoveToPage,
+    onStickerLayerChange,
     onStickerTransform,
     currentPage,
     selectedElement,
@@ -1581,6 +1654,7 @@ export default function BookDetailScreen() {
   const [showMovePagePopup, setShowMovePagePopup] = useState(false);
   const [showSizePopup, setShowSizePopup] = useState(false);
   const [showTurnPopup, setShowTurnPopup] = useState(false);
+  const [showLayerPopup, setShowLayerPopup] = useState(false);
   const [moveNotice, setMoveNotice] = useState<string | null>(null);
 
   const [showAddSheet, setShowAddSheet] = useState(false);
@@ -1619,6 +1693,7 @@ export default function BookDetailScreen() {
     setShowMovePagePopup(false);
     setShowSizePopup(false);
     setShowTurnPopup(false);
+    setShowLayerPopup(false);
     setClearSelectionNonce((value) => value + 1);
   }, []);
 
@@ -2025,6 +2100,38 @@ export default function BookDetailScreen() {
     }
   }, [cachePageSnapshot, currentPage, loadPage, markPageLocallyMutated, pageElements, pages]);
 
+  const handleStickerLayerChange = useCallback((id: string, direction: 'up' | 'down') => {
+    if (!bookId) return;
+
+    markPageLocallyMutated(currentPage);
+    setPages((prev) => {
+      const currentStickers = sortByLayerOrder(prev[currentPage] || []);
+      const movedStickers = reorderLayerItems(currentStickers, id, direction);
+      if (movedStickers === currentStickers) return prev;
+
+      const reordered = movedStickers.map((sticker, index) => ({
+        ...sticker,
+        metadata: {
+          ...(sticker.metadata || {}),
+          layerOrder: layerOrderForIndex(index),
+        },
+      }));
+
+      const next = { ...prev, [currentPage]: reordered };
+      cachePageSnapshot(currentPage, reordered, pageElements[currentPage] || []);
+
+      Promise.all(
+        reordered.map((sticker) =>
+          updateStickerBookMetadata(sticker.id, bookId, sticker.metadata || {})
+        )
+      ).catch((error) => {
+        console.warn('Failed to save sticker layer order:', error);
+      });
+
+      return next;
+    });
+  }, [bookId, cachePageSnapshot, currentPage, markPageLocallyMutated, pageElements]);
+
   const handleElementMove = useCallback((id: string, pos_x: number, pos_y: number, rotation: number, scale: number) => {
     setPageElements((prev) => {
       const next = { ...prev };
@@ -2094,6 +2201,38 @@ export default function BookDetailScreen() {
       await Promise.all([loadPage(currentPage, true), loadPage(targetPage, true)]);
     }
   }, [cachePageSnapshot, currentPage, loadPage, markPageLocallyMutated, pageElements, pages]);
+
+  const handleElementLayerChange = useCallback((id: string, direction: 'up' | 'down') => {
+    if (!bookId) return;
+
+    markPageLocallyMutated(currentPage);
+    setPageElements((prev) => {
+      const currentElements = sortByLayerOrder(prev[currentPage] || []);
+      const movedElements = reorderLayerItems(currentElements, id, direction);
+      if (movedElements === currentElements) return prev;
+
+      const reordered = movedElements.map((element, index) => ({
+        ...element,
+        style: {
+          ...(element.style || {}),
+          layerOrder: layerOrderForIndex(index),
+        },
+      }));
+
+      const next = { ...prev, [currentPage]: reordered };
+      cachePageSnapshot(currentPage, pages[currentPage] || [], reordered);
+
+      Promise.all(
+        reordered.map((element) =>
+          updateBookPageElementStyle(element.id, bookId, element.style || {})
+        )
+      ).catch((error) => {
+        console.warn('Failed to save element layer order:', error);
+      });
+
+      return next;
+    });
+  }, [bookId, cachePageSnapshot, currentPage, markPageLocallyMutated, pages]);
 
   const handleElementDelete = useCallback(async (id: string) => {
     await deleteBookPageElement(id);
@@ -2400,6 +2539,7 @@ export default function BookDetailScreen() {
     setShowMovePagePopup(false);
     setShowSizePopup(false);
     setShowTurnPopup(false);
+    setShowLayerPopup(false);
   }, []);
 
   useEffect(() => {
@@ -2411,19 +2551,29 @@ export default function BookDetailScreen() {
   const toggleMovePagePopup = useCallback(() => {
     setShowSizePopup(false);
     setShowTurnPopup(false);
+    setShowLayerPopup(false);
     setShowMovePagePopup((visible) => !visible);
   }, []);
 
   const toggleSizePopup = useCallback(() => {
     setShowMovePagePopup(false);
     setShowTurnPopup(false);
+    setShowLayerPopup(false);
     setShowSizePopup((visible) => !visible);
   }, []);
 
   const toggleTurnPopup = useCallback(() => {
     setShowMovePagePopup(false);
     setShowSizePopup(false);
+    setShowLayerPopup(false);
     setShowTurnPopup((visible) => !visible);
+  }, []);
+
+  const toggleLayerPopup = useCallback(() => {
+    setShowMovePagePopup(false);
+    setShowSizePopup(false);
+    setShowTurnPopup(false);
+    setShowLayerPopup((visible) => !visible);
   }, []);
 
   const handleMoveToPagePress = useCallback((targetPage: number) => {
@@ -2462,8 +2612,8 @@ export default function BookDetailScreen() {
   };
 
   const renderCanvas = () => {
-    const stickers = pages[currentPage] || [];
-    const elements = pageElements[currentPage] || [];
+    const stickers = sortByLayerOrder(pages[currentPage] || []);
+    const elements = sortByLayerOrder(pageElements[currentPage] || []);
     const footerClearance = TAB_BAR_HEIGHT + insets.bottom;
     const pageTilt = swipeAnim.interpolate({
       inputRange: [-SCREEN_WIDTH, 0, SCREEN_WIDTH],
@@ -2517,9 +2667,11 @@ export default function BookDetailScreen() {
               isArranging={isArrangeMode}
               onStickerTransform={handleStickerTransform}
               onStickerMoveToPage={handleStickerMoveToPage}
+              onStickerLayerChange={handleStickerLayerChange}
               onStickerPeelOff={handleStickerPeelOff}
               onElementMove={handleElementMove}
               onElementMoveToPage={handleElementMoveToPage}
+              onElementLayerChange={handleElementLayerChange}
               onElementDelete={handleElementDelete}
               onElementEditRequest={handleEditElementRequest}
               onEmptyPress={handleAddButtonPress}
@@ -2612,7 +2764,7 @@ export default function BookDetailScreen() {
 
       {renderCanvas()}
 
-      {(showMovePagePopup || showSizePopup || showTurnPopup) && (
+      {(showMovePagePopup || showSizePopup || showTurnPopup || showLayerPopup) && (
         <TouchableOpacity
           style={styles.movePopupDismissLayer}
           activeOpacity={1}
@@ -2668,6 +2820,26 @@ export default function BookDetailScreen() {
             </View>
           )}
 
+          {showLayerPopup && (
+            <View style={[styles.selectionActionPopup, { bottom: TAB_BAR_HEIGHT + insets.bottom + 94 }]}>
+              <TouchableOpacity
+                style={styles.selectionActionPopupButton}
+                onPress={() => requestStickerSelectionAction('layerDown')}
+                activeOpacity={0.78}
+              >
+                <Text style={styles.selectionActionPopupIcon}>↓</Text>
+              </TouchableOpacity>
+              <Text style={styles.selectionActionPopupLabel}>Layer</Text>
+              <TouchableOpacity
+                style={styles.selectionActionPopupButton}
+                onPress={() => requestStickerSelectionAction('layerUp')}
+                activeOpacity={0.78}
+              >
+                <Text style={styles.selectionActionPopupIcon}>↑</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
           {showMovePagePopup && (
             <View style={[styles.movePagePopup, { bottom: TAB_BAR_HEIGHT + insets.bottom + 94 }]}>
               {Array.from({ length: 5 }, (_, page) => {
@@ -2712,6 +2884,13 @@ export default function BookDetailScreen() {
               onPress={toggleTurnPopup}
             >
               <Text style={[styles.selectionMoveText, showTurnPopup && styles.selectionMoveTextActive]}>Turn</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.selectionMoveButton, showLayerPopup && styles.selectionMoveButtonActive]}
+              onPress={toggleLayerPopup}
+            >
+              <Text style={[styles.selectionMoveText, showLayerPopup && styles.selectionMoveTextActive]}>Layer</Text>
             </TouchableOpacity>
 
             {selectedCanvasItemType === 'element' && (
@@ -3580,30 +3759,28 @@ const styles = StyleSheet.create({
   },
   selectionToolDock: {
     position: 'absolute',
-    left: 12,
-    right: 12,
+    left: 8,
+    right: 8,
     height: 64,
-    borderRadius: 24,
-    backgroundColor: 'rgba(255, 253, 248, 0.98)',
-    borderWidth: 1,
-    borderColor: theme.colors.line,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 8,
-    shadowColor: '#7D695C',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.14,
-    shadowRadius: 18,
-    elevation: 9,
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 0,
     zIndex: 1100,
   },
   selectionIconButton: {
-    width: 38,
+    width: 36,
     height: 46,
     borderRadius: 15,
+    backgroundColor: 'rgba(255, 253, 248, 0.94)',
     justifyContent: 'center',
     alignItems: 'center',
+    shadowColor: '#7D695C',
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    elevation: 4,
   },
   selectionToolDangerButton: {
     backgroundColor: '#F1ECE5',
@@ -3623,11 +3800,17 @@ const styles = StyleSheet.create({
   },
   selectionMoveButton: {
     height: 46,
-    minWidth: 52,
+    minWidth: 50,
     borderRadius: 16,
+    backgroundColor: 'rgba(255, 253, 248, 0.94)',
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 8,
+    paddingHorizontal: 7,
+    shadowColor: '#7D695C',
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    elevation: 4,
   },
   selectionMoveButtonActive: {
     backgroundColor: theme.colors.purple,

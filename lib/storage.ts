@@ -360,6 +360,28 @@ export async function updateStickerMetadata(
   }
 }
 
+export async function updateStickerBookMetadata(
+  id: string,
+  bookId: string,
+  metadata: Record<string, unknown>
+): Promise<{ error: Error | null }> {
+  try {
+    const { error } = await supabase
+      .from('stickers')
+      .update({ metadata })
+      .eq('id', id)
+      .eq('book_id', bookId);
+
+    if (error) {
+      return { error };
+    }
+
+    return { error: null };
+  } catch (error) {
+    return { error: error as Error };
+  }
+}
+
 export async function createStickerThumbnail(
   stickerId: string,
   userId: string,
@@ -1388,6 +1410,47 @@ export async function updateBookPageElementContent(
         updated_at: new Date().toISOString(),
       })
       .eq('id', id);
+
+    if (error) {
+      return { error };
+    }
+
+    return { error: null };
+  } catch (error) {
+    return { error: error as Error };
+  }
+}
+
+export async function updateBookPageElementStyle(
+  id: string,
+  bookId: string,
+  style: Record<string, unknown>
+): Promise<{ error: Error | null }> {
+  try {
+    const { data, error: selectError } = await supabase
+      .from('book_page_elements')
+      .select('style')
+      .eq('id', id)
+      .eq('book_id', bookId)
+      .single();
+
+    if (selectError) {
+      return { error: selectError };
+    }
+
+    const currentStyle =
+      data?.style && typeof data.style === 'object' && !Array.isArray(data.style)
+        ? (data.style as Record<string, unknown>)
+        : {};
+
+    const { error } = await supabase
+      .from('book_page_elements')
+      .update({
+        style: { ...currentStyle, ...style },
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', id)
+      .eq('book_id', bookId);
 
     if (error) {
       return { error };
