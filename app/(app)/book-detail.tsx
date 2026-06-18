@@ -381,6 +381,7 @@ function PageCanvas({
   const isFilm = pageTheme === 'film';
   const selectedSticker = stickers.find((sticker) => sticker.id === selectedStickerId) ?? null;
   const selectedElement = elements.find((element) => element.id === selectedElementId) ?? null;
+  const hasSelection = Boolean(selectedSticker || selectedElement);
 
   useEffect(() => {
     setSelectedStickerId(null);
@@ -607,6 +608,16 @@ function PageCanvas({
     Haptics.selectionAsync();
   }, []);
 
+  const handleCanvasEmptyPress = useCallback(() => {
+    if (!hasSelection) return;
+    if (pendingStickerTapRef.current) return;
+    setSelectedStickerId(null);
+    setSelectedElementId(null);
+    setPeelConfirmSticker(null);
+    pendingStickerTapRef.current = null;
+    Haptics.selectionAsync();
+  }, [hasSelection]);
+
   const handlePeelOff = useCallback(async () => {
     if (!peelConfirmSticker) return;
 
@@ -639,6 +650,8 @@ function PageCanvas({
       onStartShouldSetResponderCapture={handleStartShouldSetResponderCapture}
       onResponderRelease={handleStickerTapRelease}
       onResponderTerminate={clearPendingStickerTap}
+      onStartShouldSetResponder={() => hasSelection}
+      onResponderGrant={handleCanvasEmptyPress}
       style={[
         styles.pageCanvasContainer,
         !isFilm && { backgroundColor: accentColor },

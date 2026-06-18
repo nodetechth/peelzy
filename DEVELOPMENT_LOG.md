@@ -97,6 +97,20 @@
 - `lib/launchSplashEvents.ts`
 - `DEVELOPMENT_LOG.md`
 
+### 2026-06-19 09:20 JST
+
+作業:
+- シール帳詳細でシール/Stamp/Text選択中に、何もない場所をタップすると選択解除されるよう変更。
+- 別シールをタップした場合は従来どおり選択移動し、空白タップだけ解除するようにした。
+
+検証:
+- `./node_modules/.bin/tsc --noEmit --pretty false`
+- `git diff --check`
+
+ファイル:
+- `app/(app)/book-detail.tsx`
+- `DEVELOPMENT_LOG.md`
+
 ### 2026-05-26 12:43 JST
 
 作業:
