@@ -80,6 +80,23 @@
 - `lib/storage.ts`
 - `DEVELOPMENT_LOG.md`
 
+### 2026-06-18 21:30 JST
+
+作業:
+- 起動時にスプラッシュカード表示後、タブバーだけが先に表示される問題を修正。
+- Home画面内でスプラッシュを表示する方式をやめ、タブレイアウト全体の上にスプラッシュを重ねる方式へ変更。
+- Home初回ロード中はタブバーを非表示にし、スプラッシュカードからトップ画面へ直接切り替わるようにした。
+
+検証:
+- `./node_modules/.bin/tsc --noEmit --pretty false`
+- `git diff --check`
+
+ファイル:
+- `app/(app)/_layout.tsx`
+- `app/(app)/home.tsx`
+- `lib/launchSplashEvents.ts`
+- `DEVELOPMENT_LOG.md`
+
 ### 2026-05-26 12:43 JST
 
 作業:

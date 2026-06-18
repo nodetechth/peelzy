@@ -13,6 +13,7 @@ import {
   Modal,
   ActivityIndicator,
   Linking,
+  DeviceEventEmitter,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -47,7 +48,7 @@ import {
   syncRevenueCatStatus,
 } from '../../lib/revenuecat';
 import { warmStickerImageCache } from '../../lib/stickerImageCache';
-import LaunchSplash from '../../components/LaunchSplash';
+import { HOME_SPLASH_VISIBILITY_EVENT } from '../../lib/launchSplashEvents';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const CARD_WIDTH = Math.min(340, SCREEN_WIDTH * 0.82);
@@ -137,6 +138,10 @@ export default function HomeScreen() {
     if (!currentBook) return;
     prefetchFirstPage(currentBook.id);
   }, [books, currentIndex, prefetchFirstPage]);
+
+  useEffect(() => {
+    DeviceEventEmitter.emit(HOME_SPLASH_VISIBILITY_EVENT, loading);
+  }, [loading]);
 
   useFocusEffect(
     useCallback(() => {
@@ -419,7 +424,7 @@ export default function HomeScreen() {
   );
 
   if (loading) {
-    return <LaunchSplash />;
+    return <View style={styles.container} />;
   }
 
   return (

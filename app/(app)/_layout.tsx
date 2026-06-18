@@ -1,9 +1,12 @@
+import { useEffect, useState } from 'react';
 import { DeviceEventEmitter, View, StyleSheet, Text } from 'react-native';
-import { Tabs } from 'expo-router';
+import { Tabs, useSegments } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Path, Circle } from 'react-native-svg';
 import { SNAP_TAB_PRESS_EVENT } from '../../lib/snapEvents';
+import { HOME_SPLASH_VISIBILITY_EVENT } from '../../lib/launchSplashEvents';
 import { theme } from '../../constants/theme';
+import LaunchSplash from '../../components/LaunchSplash';
 
 function HomeIcon({ color, size }: { color: string; size: number }) {
   return (
@@ -49,85 +52,121 @@ function SnapButton({ focused }: { focused: boolean }) {
 
 export default function AppLayout() {
   const insets = useSafeAreaInsets();
+  const segments = useSegments();
+  const [showHomeSplash, setShowHomeSplash] = useState(true);
   const tabBarHeight = 52 + insets.bottom;
+  const isHomeRoute = (segments as string[]).includes('home');
+  const shouldCoverHome = isHomeRoute && showHomeSplash;
+
+  useEffect(() => {
+    const subscription = DeviceEventEmitter.addListener(
+      HOME_SPLASH_VISIBILITY_EVENT,
+      (visible: boolean) => {
+        setShowHomeSplash(Boolean(visible));
+      }
+    );
+
+    return () => subscription.remove();
+  }, []);
 
   return (
-    <Tabs
-      screenOptions={{
-        headerShown: false,
-        tabBarStyle: {
-          position: 'absolute',
-          backgroundColor: theme.colors.background,
-          borderTopWidth: 1,
-          borderTopColor: theme.colors.line,
-          height: tabBarHeight,
-          paddingBottom: Math.max(insets.bottom - 6, 4),
-          shadowColor: '#7D695C',
-          shadowOffset: { width: 0, height: -4 },
-          shadowOpacity: 0.08,
-          shadowRadius: 18,
-          elevation: 12,
-        },
-        tabBarActiveTintColor: theme.colors.purple,
-        tabBarInactiveTintColor: '#87827C',
-        tabBarShowLabel: false,
-      }}
-    >
-      <Tabs.Screen
-        name="home"
-        options={{
-          tabBarIcon: ({ color }) => <HomeIcon color={color} size={24} />,
+    <View style={styles.root}>
+      <Tabs
+        screenOptions={{
+          headerShown: false,
+          tabBarStyle: [
+            {
+              position: 'absolute',
+              backgroundColor: theme.colors.background,
+              borderTopWidth: 1,
+              borderTopColor: theme.colors.line,
+              height: tabBarHeight,
+              paddingBottom: Math.max(insets.bottom - 6, 4),
+              shadowColor: '#7D695C',
+              shadowOffset: { width: 0, height: -4 },
+              shadowOpacity: 0.08,
+              shadowRadius: 18,
+              elevation: 12,
+            },
+            shouldCoverHome && styles.hiddenTabBar,
+          ],
+          tabBarActiveTintColor: theme.colors.purple,
+          tabBarInactiveTintColor: '#87827C',
+          tabBarShowLabel: false,
         }}
-      />
-      <Tabs.Screen
-        name="snap"
-        options={{
-          tabBarIcon: ({ focused }) => <SnapButton focused={focused} />,
-        }}
-        listeners={({ navigation }) => ({
-          tabPress: () => {
-            if (navigation.isFocused()) {
-              DeviceEventEmitter.emit(SNAP_TAB_PRESS_EVENT);
-            }
-          },
-        })}
-      />
-      <Tabs.Screen
-        name="collection"
-        options={{
-          tabBarIcon: ({ color }) => <CollectionIcon color={color} size={24} />,
-          href: '/collection',
-        }}
-      />
-      <Tabs.Screen
-        name="camera"
-        options={{
-          href: null,
-        }}
-      />
-      <Tabs.Screen
-        name="crop"
-        options={{
-          href: null,
-        }}
-      />
-      <Tabs.Screen
-        name="book"
-        options={{
-          href: null,
-        }}
-      />
-      <Tabs.Screen
-        name="book-detail"
-        options={{
-          href: null,
-        }}
-      />
-    </Tabs>
+      >
+        <Tabs.Screen
+          name="home"
+          options={{
+            tabBarIcon: ({ color }) => <HomeIcon color={color} size={24} />,
+          }}
+        />
+        <Tabs.Screen
+          name="snap"
+          options={{
+            tabBarIcon: ({ focused }) => <SnapButton focused={focused} />,
+          }}
+          listeners={({ navigation }) => ({
+            tabPress: () => {
+              if (navigation.isFocused()) {
+                DeviceEventEmitter.emit(SNAP_TAB_PRESS_EVENT);
+              }
+            },
+          })}
+        />
+        <Tabs.Screen
+          name="collection"
+          options={{
+            tabBarIcon: ({ color }) => <CollectionIcon color={color} size={24} />,
+            href: '/collection',
+          }}
+        />
+        <Tabs.Screen
+          name="camera"
+          options={{
+            href: null,
+          }}
+        />
+        <Tabs.Screen
+          name="crop"
+          options={{
+            href: null,
+          }}
+        />
+        <Tabs.Screen
+          name="book"
+          options={{
+            href: null,
+          }}
+        />
+        <Tabs.Screen
+          name="book-detail"
+          options={{
+            href: null,
+          }}
+        />
+      </Tabs>
+      {shouldCoverHome && (
+        <View pointerEvents="auto" style={styles.splashOverlay}>
+          <LaunchSplash />
+        </View>
+      )}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+  },
+  hiddenTabBar: {
+    display: 'none',
+  },
+  splashOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 100,
+    elevation: 100,
+  },
   snapButtonContainer: {
     position: 'relative',
     top: -4,
