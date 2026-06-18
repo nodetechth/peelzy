@@ -63,6 +63,23 @@
 - `app/(app)/crop.tsx`
 - `DEVELOPMENT_LOG.md`
 
+### 2026-06-18 21:05 JST
+
+作業:
+- TestFlightで作成したroundedの処理ログは端末consoleのみでDB保存されておらず、後追い解析できないことを確認。
+- 次回以降の解析用に、シールmetadataへ`processingMetrics`を保存するよう変更。
+- シール化完了後、完成画像プレビュー待ち中にステータス文言が消えてバウンドだけになる状態を修正。
+- 完成直後のDrop表示はSupabaseのpublic URLではなくローカル生成ファイルを使い、アップロード直後の画像再読込待ちを減らすよう変更。
+
+検証:
+- `./node_modules/.bin/tsc --noEmit --pretty false`
+- `git diff --check`
+
+ファイル:
+- `app/(app)/crop.tsx`
+- `lib/storage.ts`
+- `DEVELOPMENT_LOG.md`
+
 ### 2026-05-26 12:43 JST
 
 作業:

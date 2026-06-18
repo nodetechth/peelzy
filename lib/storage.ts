@@ -54,6 +54,7 @@ export type StickerMetadata = {
   };
   minDisplayScaleApplied?: boolean;
   position?: StickerPosition;
+  processingMetrics?: Record<string, number>;
 };
 
 export type Sticker = {
@@ -334,6 +335,28 @@ export async function uploadSticker(
     return { sticker: stickerData as Sticker, error: null };
   } catch (error) {
     return { sticker: null, error: error as Error };
+  }
+}
+
+export async function updateStickerMetadata(
+  id: string,
+  userId: string,
+  metadata: Record<string, unknown>
+): Promise<{ error: Error | null }> {
+  try {
+    const { error } = await supabase
+      .from('stickers')
+      .update({ metadata })
+      .eq('id', id)
+      .eq('user_id', userId);
+
+    if (error) {
+      return { error };
+    }
+
+    return { error: null };
+  } catch (error) {
+    return { error: error as Error };
   }
 }
 

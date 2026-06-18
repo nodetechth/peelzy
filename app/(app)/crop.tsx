@@ -17,7 +17,7 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { uploadSticker, Sticker, getBooks, Book, createBook, placeStickerInBook, createStickerThumbnail } from '../../lib/storage';
+import { uploadSticker, Sticker, getBooks, Book, createBook, placeStickerInBook, createStickerThumbnail, updateStickerMetadata } from '../../lib/storage';
 import { getEffectiveAccountStatus } from '../../lib/accountStatus';
 import { removeBackground, BackgroundRemovalProvider } from '../../lib/backgroundRemoval';
 import { useAuth } from '../../contexts/AuthContext';
@@ -151,7 +151,9 @@ const PROCESSING_LINES: Record<ProcessingState, string[]> = {
   uploading: [
     'Saving your sticker...',
   ],
-  done: [''],
+  done: [
+    'Preparing your sticker preview...',
+  ],
   error: [''],
 };
 
@@ -1030,10 +1032,25 @@ export default function CropScreen() {
         );
       }
 
+      const processingMetrics = {
+        ...timings,
+        total_ms: Date.now() - totalStartedAt,
+      };
+      const nextMetadata = {
+        ...(newSticker.metadata || metadata),
+        processingMetrics,
+      };
+      newSticker.metadata = nextMetadata;
+
       setSticker(newSticker);
-      setStickerUrl(newSticker.image_url);
+      setStickerUrl(uploadFile.uri);
       setProcessingState('done');
       logProcessingTimings(stickerFrameMode, 'success', timings, totalStartedAt);
+      updateStickerMetadata(newSticker.id, user.id, nextMetadata).then(({ error }) => {
+        if (error) {
+          console.warn('Failed to save sticker processing metrics:', error);
+        }
+      });
 
       if (previewUriForThumbnail) {
         createStickerThumbnail(newSticker.id, user.id, previewUriForThumbnail, {
@@ -1209,8 +1226,10 @@ export default function CropScreen() {
     processingState === 'preparing-frame' ||
     processingState === 'removing-bg' ||
     processingState === 'uploading';
+  const isWaitingForStickerPreview =
+    processingState === 'done' && !!stickerUrl && !dropAnimationReady;
   const showProcessingAnimation =
-    isProcessing || (processingState === 'done' && !!stickerUrl && !dropAnimationReady);
+    isProcessing || isWaitingForStickerPreview;
 
   return (
     <View style={styles.container}>
@@ -1257,7 +1276,7 @@ export default function CropScreen() {
         {showProcessingAnimation && imageUrl && (
           <View style={styles.processingContainer}>
             <PeelingAnimation imageUrl={imageUrl} />
-            {isProcessing && (
+            {(isProcessing || isWaitingForStickerPreview) && (
               <View style={styles.processingStatusCard}>
                 <View style={styles.processingStatusRow}>
                   <ActivityIndicator size="small" color="#A78BFA" />
