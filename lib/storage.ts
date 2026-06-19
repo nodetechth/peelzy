@@ -55,6 +55,17 @@ export type StickerMetadata = {
   minDisplayScaleApplied?: boolean;
   position?: StickerPosition;
   processingMetrics?: Record<string, number>;
+  pendingId?: string;
+  pendingCreatedAt?: string;
+  pendingPlacementIntent?: StickerPlacementIntent;
+};
+
+export type StickerPlacementIntent = {
+  bookId: string;
+  pageIndex: number;
+  pos_x: number;
+  pos_y: number;
+  rotation: number;
 };
 
 export type Sticker = {
@@ -330,6 +341,58 @@ export async function uploadSticker(
     if (insertError) {
       await supabase.storage.from('stickers').remove([fileName]);
       return { sticker: null, error: insertError };
+    }
+
+    return { sticker: stickerData as Sticker, error: null };
+  } catch (error) {
+    return { sticker: null, error: error as Error };
+  }
+}
+
+export async function uploadStickerWithId(
+  stickerId: string,
+  stickerUri: string,
+  userId: string,
+  metadata: StickerMetadata,
+  placementIntent?: StickerPlacementIntent | null
+): Promise<{ sticker: Sticker | null; error: Error | null }> {
+  try {
+    const fileName = `${userId}/${stickerId}.png`;
+    const stickerFileData = await new File(stickerUri).arrayBuffer();
+
+    const { error: uploadError } = await supabase.storage
+      .from('stickers')
+      .upload(fileName, stickerFileData, {
+        contentType: 'image/png',
+        cacheControl: STICKER_STORAGE_CACHE_CONTROL_SECONDS,
+        upsert: true,
+      });
+
+    if (uploadError) {
+      return { sticker: null, error: uploadError };
+    }
+
+    const { data: urlData } = supabase.storage.from('stickers').getPublicUrl(fileName);
+    const imageUrl = urlData.publicUrl;
+
+    const { data: stickerData, error: upsertError } = await supabase
+      .from('stickers')
+      .upsert({
+        id: stickerId,
+        user_id: userId,
+        image_url: imageUrl,
+        page_index: placementIntent?.pageIndex ?? null,
+        pos_x: placementIntent?.pos_x ?? null,
+        pos_y: placementIntent?.pos_y ?? null,
+        rotation: placementIntent?.rotation ?? 0,
+        book_id: placementIntent?.bookId ?? null,
+        metadata,
+      }, { onConflict: 'id' })
+      .select()
+      .single();
+
+    if (upsertError) {
+      return { sticker: null, error: upsertError };
     }
 
     return { sticker: stickerData as Sticker, error: null };

@@ -17,7 +17,7 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { uploadSticker, Sticker, getBooks, Book, createBook, placeStickerInBook, createStickerThumbnail, updateStickerMetadata } from '../../lib/storage';
+import { Sticker, getBooks, Book, createBook, placeStickerInBook, StickerPlacementIntent } from '../../lib/storage';
 import { getEffectiveAccountStatus } from '../../lib/accountStatus';
 import { removeBackground, BackgroundRemovalProvider } from '../../lib/backgroundRemoval';
 import { useAuth } from '../../contexts/AuthContext';
@@ -34,12 +34,21 @@ import {
 } from '../../lib/stickerFrames';
 import { getStickerFrameHeartPath, getStickerFrameStarPath } from '../../lib/stickerFrameShapes';
 import { createFrameAlphaMask, createNativeAlphaMask } from '../../lib/stickerAlphaMask';
+import {
+  canManualRetryPendingSticker,
+  createPendingSticker,
+  getLocalStickerFromPending,
+  getPendingStickers,
+  syncPendingSticker,
+  syncPendingStickerManually,
+} from '../../lib/pendingStickerSync';
 
 const TAB_BAR_HEIGHT = 80;
 const STICKER_UPLOAD_MAX_EDGE = 1024;
 const FRAMED_STICKER_SQUARE_SIZE = 1024;
 const FRAMED_STICKER_ROUNDED_WIDTH = 1024;
 const FRAMED_STICKER_ROUNDED_HEIGHT = 768;
+const PENDING_SAVE_MS = 5000;
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const STICKER_MAX_WIDTH = 280;
@@ -672,6 +681,8 @@ export default function CropScreen() {
   const [showNewBookInput, setShowNewBookInput] = useState(false);
   const [newBookName, setNewBookName] = useState('');
   const [savingToBook, setSavingToBook] = useState(false);
+  const [pendingStickerId, setPendingStickerId] = useState<string | null>(null);
+  const [pendingSyncMessage, setPendingSyncMessage] = useState<string | null>(null);
   const backgroundRemovalPromiseRef = useRef<Promise<BackgroundRemovalPreviewResult> | null>(null);
   const backgroundRemovalImageRef = useRef<string | null>(null);
   const framedStickerRef = useRef<View>(null);
@@ -713,6 +724,8 @@ export default function CropScreen() {
     setShowNewBookInput(false);
     setNewBookName('');
     setSavingToBook(false);
+    setPendingStickerId(null);
+    setPendingSyncMessage(null);
     setProcessingElapsedSeconds(0);
     processingStartedAtRef.current = null;
     processingRequestRef.current = false;
@@ -887,16 +900,16 @@ export default function CropScreen() {
         'account_status_ms',
         () => getEffectiveAccountStatus(user.id)
       );
-      if (quotaError) {
-        throw new Error('Could not check your monthly sticker limit.');
-      }
 
-      if (accountStatus.stickers_remaining <= 0) {
+      if (!quotaError && accountStatus.stickers_remaining <= 0) {
         throw new Error(
           accountStatus.plan === 'paid'
             ? 'You have used all 100 stickers for this month.'
             : 'You have used all 5 free stickers for this month. Upgrade to Peelzy Plus for 100 stickers per month.'
         );
+      }
+      if (quotaError) {
+        timings.account_status_skipped = 1;
       }
 
       let uploadFile: PreparedStickerUpload;
@@ -962,6 +975,17 @@ export default function CropScreen() {
       timings.upload_height = uploadFile.height;
       timings.upload_megapixels = Math.round((uploadFile.width * uploadFile.height) / 1000) / 1000;
 
+      const placementIntent: StickerPlacementIntent | null =
+        bookId && explicitPlacementPageIndex !== null
+          ? {
+              bookId,
+              pageIndex: explicitPlacementPageIndex,
+              pos_x: randomBetween(0.2, 0.8),
+              pos_y: randomBetween(0.2, 0.8),
+              rotation: randomBetween(-15, 15),
+            }
+          : null;
+
       const metadata = {
         capturedAt: new Date().toISOString(),
         sourceCanvas: photoUri ? 'square' as const : 'unknown' as const,
@@ -978,91 +1002,75 @@ export default function CropScreen() {
           ? createFrameAlphaMask(stickerFrameMode as Exclude<StickerFrameMode, 'cutout'>)
           : createNativeAlphaMask(nativeResult?.alphaMask),
         minDisplayScaleApplied: false,
+        processingMetrics: {
+          ...timings,
+          total_ms: Date.now() - totalStartedAt,
+        },
       };
 
-      const { sticker: newSticker, error: uploadError } = await measureAsyncStep(
+      const pendingRecord = await measureAsyncStep(
         timings,
-        'sticker_upload_ms',
-        () => uploadSticker(
-          uploadFile.uri,
-          user.id,
-          metadata
-        )
-      );
-
-      if (uploadError || !newSticker) {
-        throw new Error(uploadError?.message || 'Failed to save sticker');
-      }
-
-      // Only place automatically when a concrete page was passed from book-detail.
-      if (bookId && explicitPlacementPageIndex !== null) {
-        const targetPageIndex = explicitPlacementPageIndex;
-        const pos_x = randomBetween(0.2, 0.8);
-        const pos_y = randomBetween(0.2, 0.8);
-        const rotation = randomBetween(-15, 15);
-
-        const { error: placeError } = await measureAsyncStep(
-          timings,
-          'place_in_book_ms',
-          () => placeStickerInBook(
-            newSticker.id,
-            bookId,
-            targetPageIndex,
-            pos_x,
-            pos_y,
-            rotation
-          )
-        );
-
-        if (placeError) {
-          throw new Error(placeError.message || 'Failed to place sticker on this page');
-        }
-
-        newSticker.book_id = bookId;
-        newSticker.page_index = targetPageIndex;
-        newSticker.pos_x = pos_x;
-        newSticker.pos_y = pos_y;
-        newSticker.rotation = rotation;
-      }
-
-      const processingMetrics = {
-        ...timings,
-        total_ms: Date.now() - totalStartedAt,
-      };
-      const nextMetadata = {
-        ...(newSticker.metadata || metadata),
-        processingMetrics,
-      };
-      newSticker.metadata = nextMetadata;
-
-      setSticker(newSticker);
-      setStickerUrl(uploadFile.uri);
-      setProcessingState('done');
-      logProcessingTimings(stickerFrameMode, 'success', timings, totalStartedAt);
-      updateStickerMetadata(newSticker.id, user.id, nextMetadata).then(({ error }) => {
-        if (error) {
-          console.warn('Failed to save sticker processing metrics:', error);
-        }
-      });
-
-      if (previewUriForThumbnail) {
-        createStickerThumbnail(newSticker.id, user.id, previewUriForThumbnail, {
+        'local_pending_save_ms',
+        () => createPendingSticker({
+          userId: user.id,
+          sourceUri: uploadFile.uri,
+          previewUri: previewUriForThumbnail,
           width: previewDimensions?.width,
           height: previewDimensions?.height,
-        }).then(({ thumbnailUrl, error }) => {
-          if (error) {
-            console.warn('Failed to create sticker thumbnail:', error);
+          metadata,
+          placementIntent,
+        })
+      );
+
+      setPendingStickerId(pendingRecord.pendingId);
+      setPendingSyncMessage(null);
+
+      const localSticker = getLocalStickerFromPending(pendingRecord);
+      let completedScreen = false;
+      const completeWithLocalSticker = (message: string | null) => {
+        if (completedScreen) return;
+        completedScreen = true;
+        setSticker(localSticker);
+        setStickerUrl(uploadFile.uri);
+        setPendingSyncMessage(message);
+        setProcessingState('done');
+      };
+
+      const syncPromise = measureAsyncStep(
+        timings,
+        'sticker_sync_ms',
+        () => syncPendingSticker(pendingRecord.pendingId)
+      );
+
+      const timeoutPromise = new Promise<'pending-timeout'>((resolve) => {
+        setTimeout(() => resolve('pending-timeout'), PENDING_SAVE_MS);
+      });
+
+      const firstResult = await Promise.race([syncPromise, timeoutPromise]);
+      if (firstResult === 'pending-timeout') {
+        completeWithLocalSticker('Saved on this device. Will save when online.');
+        syncPromise.then(({ sticker: syncedSticker, error }) => {
+          if (syncedSticker) {
+            setSticker(syncedSticker);
+            setPendingStickerId(null);
+            setPendingSyncMessage(null);
             return;
           }
-          if (thumbnailUrl) {
-            setSticker((current) =>
-              current?.id === newSticker.id
-                ? { ...current, thumbnail_url: thumbnailUrl }
-                : current
-            );
+          if (error) {
+            setPendingSyncMessage('Not saved to cloud. Retry when your connection improves.');
           }
         });
+      } else if (firstResult.sticker) {
+        setSticker(firstResult.sticker);
+        setStickerUrl(uploadFile.uri);
+        setPendingStickerId(null);
+        setPendingSyncMessage(null);
+        setProcessingState('done');
+      } else {
+        completeWithLocalSticker('Saved on this device. Will save when online.');
       }
+
+      logProcessingTimings(stickerFrameMode, 'success', timings, totalStartedAt);
     } catch (error) {
       logProcessingTimings(stickerFrameMode, 'error', timings, totalStartedAt);
       setProcessingState('error');
@@ -1092,12 +1100,49 @@ export default function CropScreen() {
     fetchBooks();
   };
 
+  const handleRetryPendingSync = async () => {
+    if (!pendingStickerId) return;
+
+    const pending = (await getPendingStickers()).find((item) => item.pendingId === pendingStickerId);
+    if (!pending) {
+      setPendingStickerId(null);
+      setPendingSyncMessage(null);
+      return;
+    }
+
+    const retryState = canManualRetryPendingSticker(pending);
+    if (!retryState.canRetry) {
+      setPendingSyncMessage(retryState.message || 'Try again later.');
+      return;
+    }
+
+    setPendingSyncMessage('Syncing...');
+    const { sticker: syncedSticker, error } = await syncPendingStickerManually(pendingStickerId);
+    if (syncedSticker) {
+      setSticker(syncedSticker);
+      setPendingStickerId(null);
+      setPendingSyncMessage(null);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      return;
+    }
+
+    setPendingSyncMessage(
+      error?.message
+        ? 'Connection looks unstable. Try again in a moment.'
+        : 'Not saved to cloud. Retry when your connection improves.'
+    );
+  };
+
   const handleSelectBook = (selectedBook: Book) => {
     setSelectedBookForPlacement(selectedBook);
   };
 
   const handleSelectBookPage = async (selectedBook: Book, selectedPageIndex: number) => {
     if (!sticker) return;
+    if (pendingStickerId) {
+      setPendingSyncMessage('Save to cloud before adding this sticker to a book.');
+      return;
+    }
 
     setSavingToBook(true);
     const posX = randomBetween(0.2, 0.8);
@@ -1162,6 +1207,11 @@ export default function CropScreen() {
   };
 
   const handleComplete = () => {
+    if (pendingStickerId) {
+      setPendingSyncMessage('Saved on this device. Save to cloud before adding to a book.');
+      return;
+    }
+
     // If bookId and pageIndex were passed, go to book-detail
     if (bookId && explicitPlacementPageIndex !== null) {
       router.replace({
@@ -1331,13 +1381,26 @@ export default function CropScreen() {
         )}
 
         {processingState === 'done' && animationComplete && (
-          <View style={styles.doneActionsRow}>
-            <TouchableOpacity style={[styles.doneButton, styles.addToBookButton]} onPress={handleComplete}>
-              <Text style={styles.doneButtonText}>Add to Book</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.doneButton, styles.peelAnotherButton]} onPress={handlePeelAnother}>
-              <Text style={styles.peelAnotherButtonText}>Peel another</Text>
-            </TouchableOpacity>
+          <View style={styles.doneActionsContainer}>
+            {pendingSyncMessage && (
+              <Text style={styles.pendingSyncText}>{pendingSyncMessage}</Text>
+            )}
+            {pendingStickerId && (
+              <TouchableOpacity style={styles.pendingRetryButton} onPress={handleRetryPendingSync}>
+                <Text style={styles.pendingRetryButtonText}>Retry cloud save</Text>
+              </TouchableOpacity>
+            )}
+            <View style={styles.doneActionsRow}>
+              <TouchableOpacity
+                style={[styles.doneButton, styles.addToBookButton, pendingStickerId && styles.doneButtonDisabled]}
+                onPress={handleComplete}
+              >
+                <Text style={styles.doneButtonText}>Add to Book</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.doneButton, styles.peelAnotherButton]} onPress={handlePeelAnother}>
+                <Text style={styles.peelAnotherButtonText}>Peel another</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         )}
       </View>
@@ -1748,6 +1811,14 @@ const styles = StyleSheet.create({
     minWidth: 142,
     alignItems: 'center',
   },
+  doneButtonDisabled: {
+    opacity: 0.5,
+  },
+  doneActionsContainer: {
+    width: '100%',
+    alignItems: 'center',
+    gap: 10,
+  },
   doneActionsRow: {
     width: '100%',
     flexDirection: 'row',
@@ -1772,6 +1843,25 @@ const styles = StyleSheet.create({
     color: '#111111',
     fontSize: 16,
     fontWeight: '700',
+  },
+  pendingSyncText: {
+    color: '#D8D2CC',
+    fontSize: 13,
+    fontWeight: '700',
+    textAlign: 'center',
+    paddingHorizontal: 20,
+  },
+  pendingRetryButton: {
+    borderWidth: 1,
+    borderColor: '#A78BFA',
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  pendingRetryButtonText: {
+    color: '#D8C7FF',
+    fontSize: 13,
+    fontWeight: '800',
   },
   modalOverlay: {
     flex: 1,

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { DeviceEventEmitter, Text, TextInput } from 'react-native';
+import { AppState, DeviceEventEmitter, Text, TextInput } from 'react-native';
 import { Slot, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useFonts } from 'expo-font';
@@ -22,6 +22,7 @@ import { AuthProvider, useAuth } from '../contexts/AuthContext';
 import { theme } from '../constants/theme';
 import { ONBOARDING_COMPLETED_EVENT, ONBOARDING_STORAGE_KEY } from '../constants/onboarding';
 import LaunchSplash from '../components/LaunchSplash';
+import { processPendingStickerQueue, scheduleNextPendingStickerRetry } from '../lib/pendingStickerSync';
 
 let didApplyDefaultFonts = false;
 
@@ -30,7 +31,7 @@ SplashScreen.preventAutoHideAsync().catch(() => {
 });
 
 function RootLayoutNav() {
-  const { session, loading, passwordRecoveryMode } = useAuth();
+  const { session, loading, passwordRecoveryMode, user } = useAuth();
   const segments = useSegments();
   const router = useRouter();
   const [onboardingComplete, setOnboardingComplete] = useState<boolean | null>(null);
@@ -80,6 +81,24 @@ function RootLayoutNav() {
       router.replace('/(app)/home');
     }
   }, [session, loading, onboardingComplete, passwordRecoveryMode, segments]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+
+    processPendingStickerQueue({ force: true, limit: 3 }).catch((error) => {
+      console.warn('Pending sticker startup sync failed:', error);
+    });
+    scheduleNextPendingStickerRetry();
+
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') return;
+      processPendingStickerQueue({ force: true, limit: 3 }).catch((error) => {
+        console.warn('Pending sticker resume sync failed:', error);
+      });
+    });
+
+    return () => subscription.remove();
+  }, [user?.id]);
 
   if (loading || onboardingComplete === null || !launchSplashComplete) {
     return <LaunchSplash />;

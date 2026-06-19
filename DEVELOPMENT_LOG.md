@@ -1562,3 +1562,24 @@
 - `app/(app)/home.tsx`
 - `lib/homeCache.ts`
 - `DEVELOPMENT_LOG.md`
+
+### 2026-06-20 01:45 JST
+
+作業:
+- 電波が悪い時でもシール化結果を端末に残せるpending同期基盤を追加。
+- 完成PNGを`Paths.document`配下へ永続保存し、pendingId固定のStorage path/DB idで同期するよう変更。
+- シール化画面では5秒を超えたら端末保存済みとして完了画面へ進め、同じ同期処理を裏で継続。
+- 自動リトライを`30秒 → 3分 → 30分 → 3時間`へ設定し、以降は起動時/復帰時/手動Retryで再同期する仕様にした。
+- 手動Retryは同期中ロックとクールダウンで連打による重複アップロードを防止。
+- 起動時/アプリ復帰時にpending queueを最大3件まで同期する処理を追加。
+
+検証:
+- `./node_modules/.bin/tsc --noEmit --pretty false`
+- `git diff --check`
+
+ファイル:
+- `app/(app)/crop.tsx`
+- `app/_layout.tsx`
+- `lib/pendingStickerSync.ts`
+- `lib/storage.ts`
+- `DEVELOPMENT_LOG.md`
