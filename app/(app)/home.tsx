@@ -48,6 +48,7 @@ import {
   syncRevenueCatStatus,
 } from '../../lib/revenuecat';
 import { warmStickerImageCache } from '../../lib/stickerImageCache';
+import { getCachedHomeSnapshot, setCachedHomeSnapshot } from '../../lib/homeCache';
 import { HOME_SPLASH_VISIBILITY_EVENT } from '../../lib/launchSplashEvents';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -93,9 +94,18 @@ export default function HomeScreen() {
   const textInputRef = useRef<TextInput>(null);
   const scrollViewRef = useRef<ScrollView>(null);
   const prefetchedBookIdsRef = useRef(new Set<string>());
+  const hydratedHomeCacheRef = useRef<string | null>(null);
 
   const cards: CardItem[] = [...books, { id: 'new', isNewCard: true }];
   const totalStickers = books.reduce((sum, book) => sum + book.sticker_count, 0);
+
+  const cacheHomeSnapshot = useCallback((nextBooks: BookWithStickers[], nextAccountStatus = accountStatus) => {
+    if (!user?.id) return;
+    setCachedHomeSnapshot(user.id, {
+      books: nextBooks,
+      accountStatus: nextAccountStatus,
+    });
+  }, [accountStatus, user?.id]);
 
   const fetchBooks = useCallback(async () => {
     const [booksResult, accountResult] = await Promise.all([
@@ -116,7 +126,27 @@ export default function HomeScreen() {
 
     setBooks(fetchedBooks);
     warmStickerImageCache(fetchedBooks.flatMap((book) => book.thumbnails.map((sticker) => sticker.image_url)));
+    cacheHomeSnapshot(fetchedBooks, accountResult.error ? null : accountResult.status);
     setLoading(false);
+  }, [cacheHomeSnapshot, user?.id]);
+
+  useEffect(() => {
+    if (!user?.id || hydratedHomeCacheRef.current === user.id) return;
+
+    let isActive = true;
+    hydratedHomeCacheRef.current = user.id;
+
+    getCachedHomeSnapshot(user.id).then((cached) => {
+      if (!isActive || !cached) return;
+      setBooks(cached.books);
+      setAccountStatus(cached.accountStatus);
+      setLoading(false);
+      warmStickerImageCache(cached.books.flatMap((book) => book.thumbnails.map((sticker) => sticker.image_url)));
+    });
+
+    return () => {
+      isActive = false;
+    };
   }, [user?.id]);
 
   const prefetchFirstPage = useCallback(async (bookId: string) => {
@@ -148,14 +178,23 @@ export default function HomeScreen() {
       let isActive = true;
 
       const refresh = async () => {
-        if (isRevenueCatConfigured()) {
-          await syncRevenueCatStatus();
-        } else {
-          await syncBillingStatus();
-        }
         if (isActive) {
           fetchBooks();
         }
+
+        const syncTask = isRevenueCatConfigured()
+          ? syncRevenueCatStatus()
+          : syncBillingStatus();
+
+        syncTask
+          .then(() => {
+            if (isActive) {
+              fetchBooks();
+            }
+          })
+          .catch((error) => {
+            console.warn('Billing status sync failed:', error);
+          });
       };
 
       refresh();
@@ -241,7 +280,11 @@ export default function HomeScreen() {
         return;
       }
 
-      setBooks((prev) => [...prev, { ...book, thumbnails: [] }]);
+      setBooks((prev) => {
+        const nextBooks = [...prev, { ...book, thumbnails: [] }];
+        cacheHomeSnapshot(nextBooks);
+        return nextBooks;
+      });
       closeBookSettings();
       setTimeout(() => {
         scrollViewRef.current?.scrollTo({ x: books.length * CARD_WIDTH, animated: true });
@@ -269,13 +312,15 @@ export default function HomeScreen() {
       return;
     }
 
-      setBooks((prev) =>
-        prev.map((b) =>
-          b.id === bookSettingsTarget.id
-            ? { ...b, name, theme: bookFormTheme, accent_color: bookFormAccent, page_color: bookFormPageColor }
-            : b
-        )
+    setBooks((prev) => {
+      const nextBooks = prev.map((b) =>
+        b.id === bookSettingsTarget.id
+          ? { ...b, name, theme: bookFormTheme, accent_color: bookFormAccent, page_color: bookFormPageColor }
+          : b
       );
+      cacheHomeSnapshot(nextBooks);
+      return nextBooks;
+    });
     closeBookSettings();
   }, [
     bookFormAccent,
@@ -285,6 +330,7 @@ export default function HomeScreen() {
     bookSettingsMode,
     bookSettingsTarget,
     books.length,
+    cacheHomeSnapshot,
     closeBookSettings,
   ]);
 

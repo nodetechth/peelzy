@@ -1545,3 +1545,20 @@
 - `app.json`
 - `components/LaunchSplash.tsx`
 - `DEVELOPMENT_LOG.md`
+
+### 2026-06-20 01:05 JST
+
+作業:
+- ホーム起動をキャッシュ即表示へ改善。
+- `BookHomeSummary`とアカウント状態をユーザー単位でAsyncStorageへ保存する`homeCache`を追加。
+- ホーム表示時にキャッシュがあれば即座に`loading=false`へしてスプラッシュを解除し、裏で通常同期するよう変更。
+- 課金同期を待ってからシール帳一覧を取得していた処理を見直し、シール帳一覧取得を先に走らせるよう変更。
+
+検証:
+- `./node_modules/.bin/tsc --noEmit --pretty false`
+- `git diff --check`
+
+ファイル:
+- `app/(app)/home.tsx`
+- `lib/homeCache.ts`
+- `DEVELOPMENT_LOG.md`
