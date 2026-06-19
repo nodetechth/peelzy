@@ -137,6 +137,12 @@ function getLocalFileSizeBytes(uri: string): number | undefined {
   }
 }
 
+function parsePlacementPageIndex(value?: string) {
+  if (value === undefined) return null;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed >= 0 && parsed <= 4 ? parsed : null;
+}
+
 const PROCESSING_LINES: Record<ProcessingState, string[]> = {
   idle: [
     'Ready to peel this into a sticker.',
@@ -677,6 +683,7 @@ export default function CropScreen() {
   const processingRequestRef = useRef(false);
 
   const imageUrl = photoUri ?? null;
+  const explicitPlacementPageIndex = parsePlacementPageIndex(pageIndex);
   const stickerFrameMode = normalizeStickerFrameMode(frameMode);
   const stickerFrameColor = normalizeStickerFrameColor(frameColor);
   const isFramedSticker = stickerFrameMode !== 'cutout';
@@ -987,9 +994,9 @@ export default function CropScreen() {
         throw new Error(uploadError?.message || 'Failed to save sticker');
       }
 
-      // If bookId and pageIndex were passed, place sticker directly on the page
-      if (bookId && pageIndex !== undefined) {
-        const targetPageIndex = parseInt(pageIndex, 10);
+      // Only place automatically when a concrete page was passed from book-detail.
+      if (bookId && explicitPlacementPageIndex !== null) {
+        const targetPageIndex = explicitPlacementPageIndex;
         const pos_x = randomBetween(0.2, 0.8);
         const pos_y = randomBetween(0.2, 0.8);
         const rotation = randomBetween(-15, 15);
@@ -1016,20 +1023,6 @@ export default function CropScreen() {
         newSticker.pos_x = pos_x;
         newSticker.pos_y = pos_y;
         newSticker.rotation = rotation;
-      } else if (bookId) {
-        // If only bookId was passed (legacy flow), place it on the first page.
-        await measureAsyncStep(
-          timings,
-          'place_in_book_ms',
-          () => placeStickerInBook(
-            newSticker.id,
-            bookId,
-            0,
-            randomBetween(0.2, 0.8),
-            randomBetween(0.2, 0.8),
-            randomBetween(-15, 15)
-          )
-        );
       }
 
       const processingMetrics = {
@@ -1170,21 +1163,25 @@ export default function CropScreen() {
 
   const handleComplete = () => {
     // If bookId and pageIndex were passed, go to book-detail
-    if (bookId && pageIndex !== undefined) {
+    if (bookId && explicitPlacementPageIndex !== null) {
       router.replace({
         pathname: '/(app)/book-detail',
         params: {
           bookId,
-          pageIndex,
+          pageIndex: String(explicitPlacementPageIndex),
           placedStickerId: sticker?.id,
           refresh: String(Date.now()),
         },
       });
       return;
     }
-    // If only bookId was passed, go to collection
+
+    // If only bookId was passed, still require an explicit page choice.
     if (bookId) {
-      router.replace({ pathname: '/(app)/collection', params: { bookId } });
+      const matchingBook = books.find((book) => book.id === bookId);
+      setSelectedBookForPlacement(matchingBook ?? null);
+      setShowNewBookInput(false);
+      setShowBookSelector(true);
       return;
     }
     // Otherwise, show book selector. It also allows creating the first book.
@@ -1202,7 +1199,7 @@ export default function CropScreen() {
       pathname: '/(app)/snap',
       params: {
         ...(bookId && { bookId }),
-        ...(pageIndex !== undefined && { pageIndex }),
+        ...(explicitPlacementPageIndex !== null && { pageIndex: String(explicitPlacementPageIndex) }),
       },
     });
   };
@@ -1212,7 +1209,7 @@ export default function CropScreen() {
       pathname: '/(app)/snap',
       params: {
         ...(bookId && { bookId }),
-        ...(pageIndex !== undefined && { pageIndex }),
+        ...(explicitPlacementPageIndex !== null && { pageIndex: String(explicitPlacementPageIndex) }),
       },
     });
   };

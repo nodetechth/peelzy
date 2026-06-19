@@ -1512,3 +1512,18 @@
 ファイル:
 - `app/(app)/book-detail.tsx`
 - `DEVELOPMENT_LOG.md`
+
+### 2026-06-20 00:20 JST
+
+作業:
+- シール化中に通信不安定/バックグラウンド復帰が絡むと、ページ未指定のシールが意図せずブックに配置され得る原因を調査。
+- `crop.tsx`に残っていた`bookId`のみでPage 1へ自動配置する古いフォールバックを削除。
+- 自動配置は`bookId`と有効な`pageIndex`が明示的に揃っている時だけに制限し、`bookId`のみ残った場合はAdd to Bookでページ選択を出すよう変更。
+
+検証:
+- `./node_modules/.bin/tsc --noEmit --pretty false`
+- `git diff --check -- 'app/(app)/crop.tsx'`
+
+ファイル:
+- `app/(app)/crop.tsx`
+- `DEVELOPMENT_LOG.md`
