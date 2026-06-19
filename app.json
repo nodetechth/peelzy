@@ -9,8 +9,6 @@
     "newArchEnabled": true,
     "scheme": "peelzy",
     "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "cover",
       "backgroundColor": "#111111"
     },
     "ios": {
@@ -65,8 +63,6 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/splash-icon.png",
-          "resizeMode": "cover",
           "backgroundColor": "#111111"
         }
       ]

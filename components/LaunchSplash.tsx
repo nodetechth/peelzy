@@ -1,24 +1,13 @@
-import { useEffect, useRef } from 'react';
-import { Animated, StyleSheet, View } from 'react-native';
+import { Image, StyleSheet, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 
 export default function LaunchSplash() {
-  const opacity = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    Animated.timing(opacity, {
-      toValue: 1,
-      duration: 180,
-      useNativeDriver: true,
-    }).start();
-  }, [opacity]);
-
   return (
     <View style={styles.container}>
       <StatusBar style="light" />
-      <Animated.Image
+      <Image
         source={require('../assets/splash-icon.png')}
-        style={[styles.image, { opacity }]}
+        style={styles.image}
         resizeMode="cover"
       />
     </View>

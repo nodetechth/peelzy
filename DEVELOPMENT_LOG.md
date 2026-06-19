@@ -1527,3 +1527,21 @@
 ファイル:
 - `app/(app)/crop.tsx`
 - `DEVELOPMENT_LOG.md`
+
+### 2026-06-20 00:45 JST
+
+作業:
+- 起動直後に小さいスプラッシュ画像が一瞬見える問題を調査。
+- ネイティブスプラッシュを黒背景のみへ変更し、小さい中央画像が表示される余地を削除。
+- JS側`LaunchSplash`のフェードインを削除し、ネイティブスプラッシュからJSスプラッシュへの切り替え時の点滅を抑制。
+- ホーム初回表示は通信取得完了までスプラッシュを被せる構造のため、電波が悪い時は起動後のホーム表示が遅くなり得ることを確認。
+
+検証:
+- `npx expo config --type public --json`
+- `./node_modules/.bin/tsc --noEmit --pretty false`
+- `git diff --check`
+
+ファイル:
+- `app.json`
+- `components/LaunchSplash.tsx`
+- `DEVELOPMENT_LOG.md`
