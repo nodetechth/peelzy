@@ -1645,3 +1645,19 @@
 - `public/terms/index.html`
 - `public/account-deletion/index.html`
 - `DEVELOPMENT_LOG.md`
+
+### 2026-06-20 19:20 JST
+
+作業:
+- 初回Android production EAS BuildのGradleエラーを調査。
+- EAS prebuildで`@drawable/splashscreen_logo`参照のみ生成され、画像リソースが生成されていないことを確認。
+- 黒背景のみのネイティブスプラッシュ表示を維持しながらdrawableを確実に生成するため、`expo-splash-screen`へ画像と`imageWidth: 1`を明示。
+
+検証:
+- EAS Build `ec0d2dea-dbcf-4f27-9e55-94bd00c6f5f8`の`Run gradlew`ログを解析
+- 失敗箇所: `:app:processReleaseResources`
+- 原因: `resource drawable/splashscreen_logo not found`
+
+ファイル:
+- `app.json`
+- `DEVELOPMENT_LOG.md`
