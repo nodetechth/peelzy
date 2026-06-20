@@ -1621,3 +1621,27 @@
 ファイル:
 - `app/(app)/home.tsx`
 - `DEVELOPMENT_LOG.md`
+
+### 2026-06-20 18:50 JST
+
+作業:
+- Google Play/App Store審査で利用できる認証不要の公開リーガルページを追加。
+- 公開ページとしてトップ、Privacy Policy、Terms of Use、Account deletionを作成。
+- 運営者を`Takehiro Hayashi`、連絡先を`peelzy@nodetech.jp`として記載。
+- アカウント削除対象、申請方法、30日以内の処理、バックアップ保持、サブスクリプション解約の注意を明記。
+- VercelでExpo Webを静的出力する`build:web`と`vercel.json`を追加。
+
+検証:
+- `npm run build:web`
+- `/`、`/privacy`、`/terms`、`/account-deletion`がローカルでHTTP 200を返すことを確認
+- `git diff --check`
+
+ファイル:
+- `package.json`
+- `vercel.json`
+- `public/index.html`
+- `public/legal.css`
+- `public/privacy/index.html`
+- `public/terms/index.html`
+- `public/account-deletion/index.html`
+- `DEVELOPMENT_LOG.md`
