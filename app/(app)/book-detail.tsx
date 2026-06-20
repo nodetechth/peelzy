@@ -18,6 +18,7 @@ import {
   KeyboardAvoidingView,
   AppState,
   GestureResponderEvent,
+  DeviceEventEmitter,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter, useLocalSearchParams } from 'expo-router';
@@ -59,6 +60,13 @@ import {
   setCachedBookDetail,
   setCachedBookPage,
 } from '../../lib/bookPageCache';
+import { useAuth } from '../../contexts/AuthContext';
+import {
+  getPendingLocalStickersForBookPage,
+  isPendingSticker,
+  PENDING_STICKERS_CHANGED_EVENT,
+  PENDING_STICKER_SYNCED_EVENT,
+} from '../../lib/pendingStickerSync';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const STICKER_SIZE = 280;
@@ -523,6 +531,7 @@ function PageCanvas({
 
     if (
       selectedSticker &&
+      !isPendingSticker(selectedSticker) &&
       ['scaleUp', 'scaleDown', 'rotateLeft', 'rotateRight'].includes(selectionAction.type)
     ) {
       const currentScale = getStickerBookScale(selectedSticker);
@@ -1328,6 +1337,7 @@ function DraggableSticker({
 }: DraggableStickerProps) {
   const posX = sticker.pos_x ?? 0.5;
   const posY = sticker.pos_y ?? 0.5;
+  const pendingSticker = isPendingSticker(sticker);
   const displayScale = getStickerDisplayScale(sticker);
   const initialBookScale = getStickerBookScale(sticker);
   const [currentRotation, setCurrentRotation] = useState(sticker.rotation ?? 0);
@@ -1439,6 +1449,11 @@ function DraggableSticker({
   }, [canvasHeight, canvasWidth, pagePanX, pagePanY, pageZoom]);
 
   const saveTransform = useCallback((finalX: number, finalY: number) => {
+    if (pendingSticker) {
+      resetTemporaryStickerTransform();
+      return;
+    }
+
     const normalized = getNormalizedPosition(finalX, finalY);
     const finalBookScale = bookScaleRef.current;
     const finalRotation = normalizeRotation(rotationRef.current);
@@ -1450,7 +1465,7 @@ function DraggableSticker({
       rotation: finalRotation,
       bookScale: finalBookScale,
     });
-  }, [getNormalizedPosition, sticker.id, onTransform]);
+  }, [getNormalizedPosition, onTransform, pendingSticker, resetTemporaryStickerTransform, sticker.id]);
 
   const animateDropSequence = useCallback((finalX: number, finalY: number) => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -1747,6 +1762,7 @@ function DraggableSticker({
 export default function BookDetailScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { user } = useAuth();
   const {
     bookId,
     bookName,
@@ -1840,8 +1856,22 @@ export default function BookDetailScreen() {
     elements: BookPageElement[]
   ) => {
     if (!bookId) return;
-    setCachedBookPage(bookId, pageIndex, stickers, elements);
+    setCachedBookPage(bookId, pageIndex, stickers.filter((sticker) => !isPendingSticker(sticker)), elements);
   }, [bookId]);
+
+  const getPendingPageStickers = useCallback(
+    (pageIndex: number) => getPendingLocalStickersForBookPage(user?.id, bookId, pageIndex),
+    [bookId, user?.id]
+  );
+
+  const mergePendingPageStickers = useCallback((stickers: Sticker[], pendingStickers: Sticker[]) => {
+    if (pendingStickers.length === 0) return stickers;
+
+    const byId = new Map<string, Sticker>();
+    stickers.forEach((sticker) => byId.set(sticker.id, sticker));
+    pendingStickers.forEach((sticker) => byId.set(sticker.id, sticker));
+    return sortByLayerOrder([...byId.values()]);
+  }, []);
 
   const getPageMutationVersion = useCallback((pageIndex: number) => (
     pageMutationVersionsRef.current.get(pageIndex) ?? 0
@@ -1867,7 +1897,11 @@ export default function BookDetailScreen() {
     }
 
     if (cachedPage) {
-      setPages((prev) => ({ ...prev, [initialPageRef.current]: cachedPage.stickers }));
+      const pendingStickers = await getPendingPageStickers(initialPageRef.current);
+      setPages((prev) => ({
+        ...prev,
+        [initialPageRef.current]: mergePendingPageStickers(cachedPage.stickers, pendingStickers),
+      }));
       setPageElements((prev) => ({ ...prev, [initialPageRef.current]: cachedPage.elements }));
       didHydrate = true;
     }
@@ -1877,7 +1911,7 @@ export default function BookDetailScreen() {
     }
 
     return didHydrate;
-  }, [applyBookToState, bookId]);
+  }, [applyBookToState, bookId, getPendingPageStickers, mergePendingPageStickers]);
 
   const loadPage = useCallback(async (pageIndex: number, force = false) => {
     if (!bookId) return;
@@ -1894,7 +1928,11 @@ export default function BookDetailScreen() {
     if (!force) {
       const cachedPage = await getCachedBookPage(bookId, pageIndex);
       if (cachedPage) {
-        setPages((prev) => ({ ...prev, [pageIndex]: cachedPage.stickers }));
+        const pendingStickers = await getPendingPageStickers(pageIndex);
+        setPages((prev) => ({
+          ...prev,
+          [pageIndex]: mergePendingPageStickers(cachedPage.stickers, pendingStickers),
+        }));
         setPageElements((prev) => ({ ...prev, [pageIndex]: cachedPage.elements }));
       }
     }
@@ -1919,7 +1957,10 @@ export default function BookDetailScreen() {
           return;
         }
 
-        setPages((prev) => ({ ...prev, [pageIndex]: stickersResult.stickers }));
+        const pendingStickers = await getPendingPageStickers(pageIndex);
+        const pageStickers = mergePendingPageStickers(stickersResult.stickers, pendingStickers);
+
+        setPages((prev) => ({ ...prev, [pageIndex]: pageStickers }));
         setPageElements((prev) => ({ ...prev, [pageIndex]: elementsResult.elements }));
         cachePageSnapshot(pageIndex, stickersResult.stickers, elementsResult.elements);
         loadedPagesRef.current.add(pageIndex);
@@ -1937,7 +1978,7 @@ export default function BookDetailScreen() {
 
     pageLoadPromisesRef.current.set(pageIndex, request);
     await request;
-  }, [bookId, cachePageSnapshot, getPageMutationVersion]);
+  }, [bookId, cachePageSnapshot, getPageMutationVersion, getPendingPageStickers, mergePendingPageStickers]);
 
   const fetchInitialPage = useCallback(async () => {
     if (!bookId) return;
@@ -1964,6 +2005,21 @@ export default function BookDetailScreen() {
   useEffect(() => {
     fetchInitialPage();
   }, [fetchInitialPage]);
+
+  useEffect(() => {
+    const refreshCurrentPage = () => {
+      loadedPagesRef.current.delete(currentPage);
+      loadPage(currentPage, true);
+    };
+
+    const changedSubscription = DeviceEventEmitter.addListener(PENDING_STICKERS_CHANGED_EVENT, refreshCurrentPage);
+    const syncedSubscription = DeviceEventEmitter.addListener(PENDING_STICKER_SYNCED_EVENT, refreshCurrentPage);
+
+    return () => {
+      changedSubscription.remove();
+      syncedSubscription.remove();
+    };
+  }, [currentPage, loadPage]);
 
   useFocusEffect(
     useCallback(() => {
@@ -2164,6 +2220,7 @@ export default function BookDetailScreen() {
       const pageStickers = newPages[currentPage] || [];
       const movedSticker = pageStickers.find((s) => s.id === id);
       if (!movedSticker) return prev;
+      if (isPendingSticker(movedSticker)) return prev;
 
       newPages[currentPage] = [
         ...pageStickers.filter((s) => s.id !== id),
@@ -2186,6 +2243,7 @@ export default function BookDetailScreen() {
 
     const sourceSticker = (pages[currentPage] || []).find((sticker) => sticker.id === id);
     if (!sourceSticker) return;
+    if (isPendingSticker(sourceSticker)) return;
 
     const nextPosX = clamp(pos_x, 0.08, 0.92);
     const nextPosY = clamp(pos_y, 0.08, 0.92);
@@ -2281,8 +2339,10 @@ export default function BookDetailScreen() {
   }, [bookId, cachePageSnapshot, currentPage, markPageLocallyMutated, pageElements, pages]);
 
   const handleStickerLayerChange = useCallback((id: string, direction: 'up' | 'down') => {
+    const sticker = (pages[currentPage] || []).find((item) => item.id === id);
+    if (sticker && isPendingSticker(sticker)) return;
     handleCanvasLayerChange('sticker', id, direction);
-  }, [handleCanvasLayerChange]);
+  }, [currentPage, handleCanvasLayerChange, pages]);
 
   const handleElementMove = useCallback((id: string, pos_x: number, pos_y: number, rotation: number, scale: number) => {
     setPageElements((prev) => {
@@ -2372,6 +2432,9 @@ export default function BookDetailScreen() {
   }, [cachePageSnapshot, currentPage, pages]);
 
   const handleStickerPeelOff = useCallback(async (id: string) => {
+    const sticker = (pages[currentPage] || []).find((item) => item.id === id);
+    if (sticker && isPendingSticker(sticker)) return;
+
     await removeStickerFromPage(id);
     setPages((prev) => {
       const newPages = { ...prev };
@@ -2383,7 +2446,7 @@ export default function BookDetailScreen() {
     setIsStickerSelected(false);
     setSelectedCanvasItemType(null);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-  }, [cachePageSnapshot, currentPage, pageElements]);
+  }, [cachePageSnapshot, currentPage, pageElements, pages]);
 
   const handleCanvasLayout = useCallback((event: { nativeEvent: { layout: { width: number; height: number } } }) => {
     setCanvasSize({

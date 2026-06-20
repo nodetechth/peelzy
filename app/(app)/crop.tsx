@@ -1208,6 +1208,19 @@ export default function CropScreen() {
 
   const handleComplete = () => {
     if (pendingStickerId) {
+      if (bookId && explicitPlacementPageIndex !== null) {
+        router.replace({
+          pathname: '/(app)/book-detail',
+          params: {
+            bookId,
+            pageIndex: String(explicitPlacementPageIndex),
+            placedStickerId: sticker?.id,
+            refresh: String(Date.now()),
+          },
+        });
+        return;
+      }
+
       setPendingSyncMessage('Saved on this device. Save to cloud before adding to a book.');
       return;
     }
@@ -1392,7 +1405,11 @@ export default function CropScreen() {
             )}
             <View style={styles.doneActionsRow}>
               <TouchableOpacity
-                style={[styles.doneButton, styles.addToBookButton, pendingStickerId && styles.doneButtonDisabled]}
+                style={[
+                  styles.doneButton,
+                  styles.addToBookButton,
+                  pendingStickerId && !(bookId && explicitPlacementPageIndex !== null) && styles.doneButtonDisabled,
+                ]}
                 onPress={handleComplete}
               >
                 <Text style={styles.doneButtonText}>Add to Book</Text>

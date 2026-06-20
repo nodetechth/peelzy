@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { DeviceEventEmitter } from 'react-native';
 import { Directory, File, Paths } from 'expo-file-system';
 import * as Crypto from 'expo-crypto';
 import {
@@ -19,6 +20,9 @@ const MANUAL_RETRY_ESCALATED_COOLDOWN_MS = 60_000;
 const MANUAL_RETRY_MAX_COOLDOWN_MS = 300_000;
 const inFlightPendingIds = new Set<string>();
 let scheduledRetryTimer: ReturnType<typeof setTimeout> | null = null;
+
+export const PENDING_STICKERS_CHANGED_EVENT = 'peelzy:pending-stickers-changed';
+export const PENDING_STICKER_SYNCED_EVENT = 'peelzy:pending-sticker-synced';
 
 export type PendingStickerStatus = 'pending' | 'syncing' | 'needs_attention' | 'synced' | 'failed_permanent';
 export type PendingStickerErrorType = 'network' | 'auth' | 'quota' | 'permanent' | 'local_file_missing' | null;
@@ -140,6 +144,7 @@ async function writePendingItems(items: PendingStickerRecord[]): Promise<void> {
     version: CACHE_VERSION,
     items: activeItems,
   }));
+  DeviceEventEmitter.emit(PENDING_STICKERS_CHANGED_EVENT);
   scheduleNextPendingStickerRetry();
 }
 
@@ -218,8 +223,42 @@ export function getLocalStickerFromPending(record: PendingStickerRecord): Sticke
     book_id: record.placementIntent?.bookId ?? null,
     created_at: record.createdAt,
     updated_at: record.updatedAt,
-    metadata: record.metadata,
+    metadata: {
+      ...record.metadata,
+      pendingId: record.pendingId,
+      pendingStatus: record.status,
+      pendingErrorType: record.errorType,
+      pendingLastError: record.lastError,
+    },
   };
+}
+
+export function isPendingSticker(sticker: Pick<Sticker, 'metadata'>): boolean {
+  return typeof sticker.metadata?.pendingId === 'string';
+}
+
+export async function getPendingLocalStickers(userId: string): Promise<Sticker[]> {
+  const records = await readPendingItems();
+  return records
+    .filter((record) => record.userId === userId)
+    .map(getLocalStickerFromPending);
+}
+
+export async function getPendingLocalStickersForBookPage(
+  userId: string | undefined,
+  bookId: string,
+  pageIndex: number
+): Promise<Sticker[]> {
+  if (!userId) return [];
+
+  const records = await readPendingItems();
+  return records
+    .filter((record) =>
+      record.userId === userId &&
+      record.placementIntent?.bookId === bookId &&
+      record.placementIntent.pageIndex === pageIndex
+    )
+    .map(getLocalStickerFromPending);
 }
 
 export function canManualRetryPendingSticker(record: PendingStickerRecord): { canRetry: boolean; message?: string } {
@@ -308,6 +347,7 @@ export async function syncPendingSticker(
     }
 
     await updatePendingSticker(record.pendingId, () => null);
+    DeviceEventEmitter.emit(PENDING_STICKER_SYNCED_EVENT, { pendingId: record.pendingId, sticker });
     if (localFile.exists) {
       try {
         localFile.delete();

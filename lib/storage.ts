@@ -58,6 +58,9 @@ export type StickerMetadata = {
   pendingId?: string;
   pendingCreatedAt?: string;
   pendingPlacementIntent?: StickerPlacementIntent;
+  pendingStatus?: string;
+  pendingErrorType?: string | null;
+  pendingLastError?: string | null;
 };
 
 export type StickerPlacementIntent = {

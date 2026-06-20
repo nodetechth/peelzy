@@ -80,6 +80,8 @@ export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const [books, setBooks] = useState<BookWithStickers[]>([]);
   const [loading, setLoading] = useState(true);
+  const [homeLoadError, setHomeLoadError] = useState<string | null>(null);
+  const [retryingHomeLoad, setRetryingHomeLoad] = useState(false);
   const [accountStatus, setAccountStatus] = useState<AccountStatus | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [billingLoading, setBillingLoading] = useState(false);
@@ -108,26 +110,37 @@ export default function HomeScreen() {
   }, [accountStatus, user?.id]);
 
   const fetchBooks = useCallback(async () => {
-    const [booksResult, accountResult] = await Promise.all([
-      getBooksForHome(),
-      getEffectiveAccountStatus(user?.id),
-    ]);
-    const { books: fetchedBooks, error } = booksResult;
+    try {
+      const [booksResult, accountResult] = await Promise.all([
+        getBooksForHome(),
+        getEffectiveAccountStatus(user?.id),
+      ]);
+      const { books: fetchedBooks, error } = booksResult;
 
-    if (!accountResult.error) {
-      setAccountStatus(accountResult.status);
-    }
+      if (!accountResult.error) {
+        setAccountStatus(accountResult.status);
+      }
 
-    if (error) {
-      console.error('Error fetching books:', error);
+      if (error) {
+        console.error('Error fetching books:', error);
+        setHomeLoadError('Couldn’t load. Check your connection and retry.');
+        setLoading(false);
+        setRetryingHomeLoad(false);
+        return;
+      }
+
+      setBooks(fetchedBooks);
+      setHomeLoadError(null);
+      warmStickerImageCache(fetchedBooks.flatMap((book) => book.thumbnails.map((sticker) => sticker.image_url)));
+      cacheHomeSnapshot(fetchedBooks, accountResult.error ? null : accountResult.status);
       setLoading(false);
-      return;
+      setRetryingHomeLoad(false);
+    } catch (error) {
+      console.error('Error fetching books:', error);
+      setHomeLoadError('Couldn’t load. Check your connection and retry.');
+      setLoading(false);
+      setRetryingHomeLoad(false);
     }
-
-    setBooks(fetchedBooks);
-    warmStickerImageCache(fetchedBooks.flatMap((book) => book.thumbnails.map((sticker) => sticker.image_url)));
-    cacheHomeSnapshot(fetchedBooks, accountResult.error ? null : accountResult.status);
-    setLoading(false);
   }, [cacheHomeSnapshot, user?.id]);
 
   useEffect(() => {
@@ -222,6 +235,12 @@ export default function HomeScreen() {
       setCurrentIndex(index);
     }
   }, [currentIndex, cards.length]);
+
+  const handleRetryHomeLoad = useCallback(() => {
+    setRetryingHomeLoad(true);
+    setHomeLoadError(null);
+    fetchBooks();
+  }, [fetchBooks]);
 
   const handleMomentumScrollEnd = useCallback((event: { nativeEvent: { contentOffset: { x: number } } }) => {
     const offsetX = event.nativeEvent.contentOffset.x;
@@ -492,35 +511,56 @@ export default function HomeScreen() {
       </View>
 
       <View style={[styles.swipeArea, { paddingBottom: TAB_BAR_HEIGHT + insets.bottom }]}>
-        <ScrollView
-          ref={scrollViewRef}
-          horizontal
-          pagingEnabled
-          showsHorizontalScrollIndicator={false}
-          snapToInterval={CARD_WIDTH}
-          decelerationRate="fast"
-          contentContainerStyle={styles.scrollContent}
-          onScroll={handleScroll}
-          onMomentumScrollEnd={handleMomentumScrollEnd}
-          scrollEventThrottle={16}
-        >
-          {cards.map((card, index) =>
-            isNewBookCard(card) ? renderNewBookCard() : renderBookCard(card, index)
-          )}
-        </ScrollView>
+        {homeLoadError && books.length === 0 ? (
+          <View style={styles.offlineState}>
+            <Text style={styles.offlineTitle}>Couldn’t load</Text>
+            <Text style={styles.offlineText}>Check your connection and retry.</Text>
+            <TouchableOpacity
+              style={styles.offlineRetryButton}
+              onPress={handleRetryHomeLoad}
+              disabled={retryingHomeLoad}
+              activeOpacity={0.84}
+            >
+              {retryingHomeLoad ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text style={styles.offlineRetryButtonText}>Retry</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <>
+            <ScrollView
+              ref={scrollViewRef}
+              horizontal
+              pagingEnabled
+              showsHorizontalScrollIndicator={false}
+              snapToInterval={CARD_WIDTH}
+              decelerationRate="fast"
+              contentContainerStyle={styles.scrollContent}
+              onScroll={handleScroll}
+              onMomentumScrollEnd={handleMomentumScrollEnd}
+              scrollEventThrottle={16}
+            >
+              {cards.map((card, index) =>
+                isNewBookCard(card) ? renderNewBookCard() : renderBookCard(card, index)
+              )}
+            </ScrollView>
 
-        <View style={styles.indicatorContainer}>
-          {cards.map((_, index) => (
-            <View
-              key={index}
-              style={[
-                styles.indicator,
-                index === currentIndex && styles.indicatorActive,
-              ]}
-            />
-          ))}
-        </View>
-        <Text style={styles.swipeHint}>swipe to switch</Text>
+            <View style={styles.indicatorContainer}>
+              {cards.map((_, index) => (
+                <View
+                  key={index}
+                  style={[
+                    styles.indicator,
+                    index === currentIndex && styles.indicatorActive,
+                  ]}
+                />
+              ))}
+            </View>
+            <Text style={styles.swipeHint}>swipe to switch</Text>
+          </>
+        )}
       </View>
 
       <Modal
@@ -815,6 +855,46 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  offlineState: {
+    width: CARD_WIDTH,
+    minHeight: 260,
+    borderRadius: 24,
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1,
+    borderColor: theme.colors.line,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    ...theme.shadow.soft,
+  },
+  offlineTitle: {
+    fontSize: 24,
+    color: theme.colors.text,
+    fontWeight: '900',
+    marginBottom: 8,
+  },
+  offlineText: {
+    fontSize: 15,
+    color: theme.colors.textMuted,
+    fontWeight: '700',
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: 18,
+  },
+  offlineRetryButton: {
+    minWidth: 132,
+    minHeight: 46,
+    borderRadius: 23,
+    backgroundColor: theme.colors.purple,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 22,
+  },
+  offlineRetryButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '900',
   },
   scrollContent: {
     alignItems: 'center',

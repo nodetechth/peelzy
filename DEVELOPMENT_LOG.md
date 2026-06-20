@@ -1583,3 +1583,41 @@
 - `lib/pendingStickerSync.ts`
 - `lib/storage.ts`
 - `DEVELOPMENT_LOG.md`
+
+### 2026-06-20 03:20 JST
+
+作業:
+- pending同期中のシールをコレクション一覧へ表示し、`Saved on this device`表示と詳細モーダル内の`Retry`を追加。
+- 未同期シールは交換リンク作成/共有/シール帳追加/削除/Peel/Owner historyを無効化し、正式同期後に通常操作へ戻るよう制御。
+- ページ指定つきで作成された未同期シールを、シール帳詳細の該当ページへ仮表示するよう変更。
+- シール帳キャッシュには未同期シールを保存せず、表示時だけpending queueから合成することで同期成功後に正式シールへ置換できるようにした。
+- pending queueの変更/同期成功イベントを追加し、コレクションとシール帳詳細が同期成功時に再取得するよう変更。
+- シール帳上の未同期仮表示はマークを出さず、正式同期前の移動/サイズ/回転/Layer/Peelは保存不整合を避けるため無効化。
+
+検証:
+- `npx tsc --noEmit`
+- `npm run typecheck`はスクリプト未定義のため実行不可
+
+ファイル:
+- `app/(app)/collection.tsx`
+- `app/(app)/book-detail.tsx`
+- `app/(app)/crop.tsx`
+- `lib/pendingStickerSync.ts`
+- `lib/storage.ts`
+- `DEVELOPMENT_LOG.md`
+
+### 2026-06-20 03:40 JST
+
+作業:
+- キャッシュが無い状態でホーム取得に失敗した場合でも、スプラッシュに閉じ込めずホーム枠を表示するよう変更。
+- 通信失敗時は`Couldn’t load. Check your connection and retry.`と`Retry`ボタンを表示。
+- Retryは画面内のボタンだけローディング表示にし、再びスプラッシュへ戻らないようにした。
+- キャッシュがある場合は従来どおり即ホーム表示し、裏で同期する挙動を維持。
+
+検証:
+- `npx tsc --noEmit`
+- `git diff --check`
+
+ファイル:
+- `app/(app)/home.tsx`
+- `DEVELOPMENT_LOG.md`

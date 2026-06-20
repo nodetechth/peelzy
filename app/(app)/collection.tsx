@@ -15,6 +15,7 @@ import {
   Platform,
   InteractionManager,
   ScrollView,
+  DeviceEventEmitter,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -52,6 +53,15 @@ import {
   setCachedCollectionSnapshot,
 } from '../../lib/collectionCache';
 import { warmStickerImageCache } from '../../lib/stickerImageCache';
+import {
+  canManualRetryPendingSticker,
+  getPendingLocalStickers,
+  getPendingStickers,
+  isPendingSticker,
+  PENDING_STICKERS_CHANGED_EVENT,
+  PENDING_STICKER_SYNCED_EVENT,
+  syncPendingStickerManually,
+} from '../../lib/pendingStickerSync';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const NUM_COLUMNS = 3;
@@ -135,6 +145,7 @@ const StickerCell = memo(function StickerCell({ sticker, onPress, hasActiveOffer
     onPress(sticker);
   }, [onPress, sticker]);
   const displayScale = getStickerDisplayScale(sticker);
+  const pending = isPendingSticker(sticker);
   const imageStyle = useMemo(
     () => [
       styles.stickerImage,
@@ -159,6 +170,11 @@ const StickerCell = memo(function StickerCell({ sticker, onPress, hasActiveOffer
           <Text style={styles.stickerOfferTagText}>Offered</Text>
         </View>
       )}
+      {pending && (
+        <View style={styles.stickerPendingTag}>
+          <Text style={styles.stickerPendingTagText}>Saved on this device</Text>
+        </View>
+      )}
     </TouchableOpacity>
   );
 });
@@ -173,6 +189,7 @@ export default function CollectionScreen() {
   const [refreshing, setRefreshing] = useState(false);
 
   const [allStickers, setAllStickers] = useState<Sticker[]>([]);
+  const [pendingStickers, setPendingStickers] = useState<Sticker[]>([]);
   const [allBooks, setAllBooks] = useState<Book[]>([]);
   const [exchangeOffers, setExchangeOffers] = useState<ExchangeOffer[]>([]);
   const [offersLoading, setOffersLoading] = useState(false);
@@ -212,14 +229,22 @@ export default function CollectionScreen() {
 
   const translateY = useRef(new Animated.Value(0)).current;
   const translateX = useRef(new Animated.Value(0)).current;
+  const visibleStickers = useMemo(() => {
+    const pendingIds = new Set(pendingStickers.map((sticker) => sticker.id));
+    return sortStickersByCreatedAt([
+      ...pendingStickers,
+      ...allStickers.filter((sticker) => !pendingIds.has(sticker.id)),
+    ]);
+  }, [allStickers, pendingStickers]);
   const unplacedStickers = useMemo(
-    () => allStickers.filter((sticker) => sticker.page_index === null),
-    [allStickers]
+    () => visibleStickers.filter((sticker) => sticker.page_index === null),
+    [visibleStickers]
   );
   const selectedStickerList = useMemo(
-    () => (activeTab === 'unplaced' ? unplacedStickers : allStickers),
-    [activeTab, allStickers, unplacedStickers]
+    () => (activeTab === 'unplaced' ? unplacedStickers : visibleStickers),
+    [activeTab, unplacedStickers, visibleStickers]
   );
+  const selectedStickerIsPending = selectedSticker ? isPendingSticker(selectedSticker) : false;
   const activeOfferByStickerId = useMemo(() => {
     const map = new Map<string, ExchangeOffer>();
     exchangeOffers.forEach((offer) => {
@@ -296,6 +321,16 @@ export default function CollectionScreen() {
     });
   }, [user?.id]);
 
+  const loadPendingStickers = useCallback(async () => {
+    if (!user?.id) {
+      setPendingStickers([]);
+      return;
+    }
+
+    const stickers = await getPendingLocalStickers(user.id);
+    setPendingStickers(sortStickersByCreatedAt(stickers));
+  }, [user?.id]);
+
   useEffect(() => {
     let isActive = true;
 
@@ -315,6 +350,7 @@ export default function CollectionScreen() {
       setLastStickerSyncAt(cached.lastStickerSyncAt);
       setLoading(false);
       warmCollectionImages(cached.stickers, cached.exchangeOffers);
+      loadPendingStickers();
     };
 
     hydrate();
@@ -322,7 +358,7 @@ export default function CollectionScreen() {
     return () => {
       isActive = false;
     };
-  }, [user?.id, warmCollectionImages]);
+  }, [loadPendingStickers, user?.id, warmCollectionImages]);
 
   const fetchOffers = useCallback(async (): Promise<ExchangeOffer[]> => {
     if (!user) {
@@ -428,6 +464,21 @@ export default function CollectionScreen() {
     }
   }, [cacheCollectionSnapshot, fetchOffers, user, warmCollectionImages]);
 
+  useEffect(() => {
+    loadPendingStickers();
+
+    const changedSubscription = DeviceEventEmitter.addListener(PENDING_STICKERS_CHANGED_EVENT, loadPendingStickers);
+    const syncedSubscription = DeviceEventEmitter.addListener(PENDING_STICKER_SYNCED_EVENT, () => {
+      loadPendingStickers();
+      fetchData({ includeOffers: offersLoadedRef.current });
+    });
+
+    return () => {
+      changedSubscription.remove();
+      syncedSubscription.remove();
+    };
+  }, [fetchData, loadPendingStickers]);
+
   useFocusEffect(
     useCallback(() => {
       let isActive = true;
@@ -479,6 +530,10 @@ export default function CollectionScreen() {
 
   const handleShare = async () => {
     if (!selectedSticker) return;
+    if (isPendingSticker(selectedSticker)) {
+      showNotice('Not synced yet', 'This sticker is saved on this device. Retry cloud save before sharing.');
+      return;
+    }
     try {
       await Share.share({
         url: selectedSticker.image_url,
@@ -491,6 +546,10 @@ export default function CollectionScreen() {
 
   const handlePeelOff = async () => {
     if (!selectedSticker) return;
+    if (isPendingSticker(selectedSticker)) {
+      showNotice('Not synced yet', 'This sticker is saved on this device. Retry cloud save before changing books.');
+      return;
+    }
 
     const { error } = await removeStickerFromPage(selectedSticker.id);
     if (error) {
@@ -505,6 +564,10 @@ export default function CollectionScreen() {
 
   const handleDelete = () => {
     if (!selectedSticker) return;
+    if (isPendingSticker(selectedSticker)) {
+      showNotice('Not synced yet', 'This sticker is saved on this device. Retry cloud save before deleting it.');
+      return;
+    }
 
     Alert.alert(
       'Delete Sticker',
@@ -538,6 +601,10 @@ export default function CollectionScreen() {
 
   const handlePlaceInBook = () => {
     if (!selectedSticker) return;
+    if (isPendingSticker(selectedSticker)) {
+      showNotice('Not synced yet', 'This sticker is saved on this device. Retry cloud save before placing it in a book.');
+      return;
+    }
 
     setPlacementSticker(selectedSticker);
     setSelectedSticker(null);
@@ -550,6 +617,39 @@ export default function CollectionScreen() {
   const showNotice = (title: string, message: string) => {
     setNotice({ title, message });
   };
+
+  const handleRetryPendingSticker = useCallback(async () => {
+    if (!selectedSticker || !isPendingSticker(selectedSticker)) return;
+
+    const pendingId = selectedSticker.metadata?.pendingId;
+    if (typeof pendingId !== 'string') return;
+
+    const record = (await getPendingStickers()).find((item) => item.pendingId === pendingId);
+    if (!record) {
+      showNotice('Already synced', 'This sticker has already been saved to the cloud.');
+      await loadPendingStickers();
+      fetchData({ includeOffers: offersLoadedRef.current });
+      return;
+    }
+
+    const retryState = canManualRetryPendingSticker(record);
+    if (!retryState.canRetry) {
+      showNotice('Retry unavailable', retryState.message || 'Please try again later.');
+      return;
+    }
+
+    const { sticker, error } = await syncPendingStickerManually(pendingId);
+    if (error || !sticker) {
+      showNotice('Cloud save failed', error?.message || 'Please check your connection and try again.');
+      await loadPendingStickers();
+      return;
+    }
+
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    setSelectedSticker(sticker);
+    await loadPendingStickers();
+    fetchData({ includeOffers: offersLoadedRef.current });
+  }, [fetchData, loadPendingStickers, selectedSticker]);
 
   const buildOfferLink = (token: string) => Linking.createURL(`/exchange/${token}`);
 
@@ -598,6 +698,10 @@ export default function CollectionScreen() {
 
   const createAndShareOffer = async (autoAccept: boolean) => {
     if (!selectedSticker) return;
+    if (isPendingSticker(selectedSticker)) {
+      showNotice('Not synced yet', 'Retry cloud save before creating an exchange link.');
+      return;
+    }
     if (activeOfferByStickerId.has(selectedSticker.id)) {
       showNotice('Already offered', 'This sticker already has an active exchange offer.');
       return;
@@ -621,6 +725,10 @@ export default function CollectionScreen() {
 
   const handleCreateOffer = async () => {
     if (!selectedSticker) return;
+    if (isPendingSticker(selectedSticker)) {
+      showNotice('Not synced yet', 'Retry cloud save before creating an exchange link.');
+      return;
+    }
     const currentOffers = offersLoaded ? exchangeOffers : await fetchOffers();
     const hasActiveOffer = currentOffers.some((offer) => {
       const isActive = offer.status === 'active' && new Date(offer.expires_at).getTime() > Date.now();
@@ -740,6 +848,10 @@ export default function CollectionScreen() {
   const handleSelectPage = async (bookId: string, pageIndex: number) => {
     const targetSticker = placementSticker ?? selectedSticker;
     if (!targetSticker) return;
+    if (isPendingSticker(targetSticker)) {
+      showNotice('Not synced yet', 'Retry cloud save before placing this sticker in a book.');
+      return;
+    }
 
     setPlacing(true);
     const randomX = 0.2 + Math.random() * 0.6;
@@ -811,6 +923,10 @@ export default function CollectionScreen() {
 
   const handleOpenOwnerHistory = useCallback(async () => {
     if (!selectedSticker) return;
+    if (isPendingSticker(selectedSticker)) {
+      showNotice('Not synced yet', 'Owner history is available after cloud save.');
+      return;
+    }
 
     setLoadingOwnerHistory(true);
     setShowOwnerHistory(true);
@@ -937,14 +1053,14 @@ export default function CollectionScreen() {
   const renderAllTab = () => (
     <FlatList
       key="collection-all-grid"
-      data={allStickers}
+      data={visibleStickers}
       renderItem={renderStickerItem}
       keyExtractor={(item) => item.id}
       numColumns={NUM_COLUMNS}
       columnWrapperStyle={styles.row}
       contentContainerStyle={[
         styles.gridContent,
-        allStickers.length === 0 && styles.gridContentEmpty,
+        visibleStickers.length === 0 && styles.gridContentEmpty,
         { paddingBottom: TAB_BAR_HEIGHT + insets.bottom + 16 },
       ]}
       showsVerticalScrollIndicator={false}
@@ -1177,7 +1293,7 @@ export default function CollectionScreen() {
   };
 
   const isPlaced = selectedSticker?.page_index !== null && selectedSticker?.page_index !== undefined;
-  const canPlaceSelectedSticker = !!selectedSticker && !isPlaced;
+  const canPlaceSelectedSticker = !!selectedSticker && !isPlaced && !selectedStickerIsPending;
 
   if (loading) {
     return (
@@ -1314,10 +1430,30 @@ export default function CollectionScreen() {
                     )}
                   </View>
 
+                  {selectedStickerIsPending && (
+                    <View style={styles.pendingStatusCard}>
+                      <Text style={styles.pendingStatusTitle}>Saved on this device</Text>
+                      <Text style={styles.pendingStatusText}>
+                        Cloud save is pending. Exchange and sharing are available after sync.
+                      </Text>
+                      <TouchableOpacity
+                        style={styles.pendingRetryButton}
+                        onPress={handleRetryPendingSticker}
+                        activeOpacity={0.82}
+                      >
+                        <Text style={styles.pendingRetryButtonText}>Retry</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+
                   <TouchableOpacity
-                    style={styles.ownerHistoryButton}
+                    style={[
+                      styles.ownerHistoryButton,
+                      selectedStickerIsPending && styles.actionButtonDisabled,
+                    ]}
                     onPress={handleOpenOwnerHistory}
                     activeOpacity={0.82}
+                    disabled={selectedStickerIsPending}
                   >
                     <Text style={styles.ownerHistoryButtonText}>Owner history</Text>
                     <Text style={styles.ownerHistoryButtonIcon}>→</Text>
@@ -1334,9 +1470,13 @@ export default function CollectionScreen() {
                       </TouchableOpacity>
                     ) : isPlaced ? (
                       <TouchableOpacity
-                        style={styles.peelOffButton}
+                        style={[
+                          styles.peelOffButton,
+                          selectedStickerIsPending && styles.actionButtonDisabled,
+                        ]}
                         onPress={handlePeelOff}
                         activeOpacity={0.8}
+                        disabled={selectedStickerIsPending}
                       >
                         <Text style={styles.peelOffButtonText}>Peel off</Text>
                       </TouchableOpacity>
@@ -1346,11 +1486,11 @@ export default function CollectionScreen() {
                       <TouchableOpacity
                         style={[
                           styles.exchangeOfferButton,
-                          activeOfferByStickerId.has(selectedSticker.id) && styles.exchangeOfferButtonDisabled,
+                          (activeOfferByStickerId.has(selectedSticker.id) || selectedStickerIsPending) && styles.exchangeOfferButtonDisabled,
                         ]}
                         onPress={handleCreateOffer}
                         activeOpacity={0.8}
-                        disabled={creatingOffer}
+                        disabled={creatingOffer || selectedStickerIsPending}
                       >
                         {creatingOffer ? (
                           <ActivityIndicator size="small" color="#fff" />
@@ -1365,18 +1505,25 @@ export default function CollectionScreen() {
 
                   <View style={styles.secondaryActions}>
                     <TouchableOpacity
-                      style={styles.shareButton}
+                      style={[
+                        styles.shareButton,
+                        selectedStickerIsPending && styles.actionButtonDisabled,
+                      ]}
                       onPress={handleShare}
                       activeOpacity={0.8}
+                      disabled={selectedStickerIsPending}
                     >
                       <Text style={styles.shareButtonText}>Share</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity
-                      style={styles.deleteButton}
+                      style={[
+                        styles.deleteButton,
+                        selectedStickerIsPending && styles.actionButtonDisabled,
+                      ]}
                       onPress={handleDelete}
                       activeOpacity={0.8}
-                      disabled={deleting}
+                      disabled={deleting || selectedStickerIsPending}
                     >
                       {deleting ? (
                         <ActivityIndicator size="small" color="#ff4444" />
@@ -1775,6 +1922,22 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 9,
     fontWeight: '900',
+  },
+  stickerPendingTag: {
+    position: 'absolute',
+    left: 6,
+    right: 6,
+    bottom: 6,
+    backgroundColor: 'rgba(36, 30, 28, 0.82)',
+    borderRadius: 12,
+    paddingHorizontal: 7,
+    paddingVertical: 5,
+  },
+  stickerPendingTagText: {
+    color: '#fff',
+    fontSize: 9,
+    fontWeight: '900',
+    textAlign: 'center',
   },
   emptyContainer: {
     flex: 1,
@@ -2182,6 +2345,40 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '900',
   },
+  pendingStatusCard: {
+    width: '100%',
+    maxWidth: 340,
+    marginTop: 10,
+    borderRadius: 18,
+    backgroundColor: '#FFF7E8',
+    borderWidth: 1,
+    borderColor: '#F0D49D',
+    padding: 14,
+    gap: 8,
+  },
+  pendingStatusTitle: {
+    fontSize: 15,
+    color: theme.colors.text,
+    fontWeight: '900',
+  },
+  pendingStatusText: {
+    fontSize: 13,
+    color: theme.colors.textMuted,
+    lineHeight: 18,
+    fontWeight: '700',
+  },
+  pendingRetryButton: {
+    minHeight: 42,
+    borderRadius: 21,
+    backgroundColor: theme.colors.black,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  pendingRetryButtonText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '900',
+  },
   primaryActions: {
     width: '100%',
     maxWidth: 340,
@@ -2207,6 +2404,9 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: theme.colors.text,
     fontWeight: '800',
+  },
+  actionButtonDisabled: {
+    opacity: 0.45,
   },
   placeButton: {
     width: '100%',
