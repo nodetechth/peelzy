@@ -1651,7 +1651,8 @@
 作業:
 - 初回Android production EAS BuildのGradleエラーを調査。
 - EAS prebuildで`@drawable/splashscreen_logo`参照のみ生成され、画像リソースが生成されていないことを確認。
-- 黒背景のみのネイティブスプラッシュ表示を維持しながらdrawableを確実に生成するため、`expo-splash-screen`へ画像と`imageWidth: 1`を明示。
+- 黒背景のみのネイティブスプラッシュ表示を維持しながらdrawableを確実に生成するため、`expo-splash-screen`へ画像と`imageWidth: 4`を明示。
+- `imageWidth: 1`ではAndroidの低密度画像生成時に無効寸法となるため、全密度で生成可能な最小表示へ調整。
 
 検証:
 - EAS Build `ec0d2dea-dbcf-4f27-9e55-94bd00c6f5f8`の`Run gradlew`ログを解析
